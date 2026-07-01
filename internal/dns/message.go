@@ -1,10 +1,3 @@
-// Package dns implements a minimal, allocation-conscious RFC 1035 DNS
-// message parser and builder along with an authoritative UDP/TCP server.
-//
-// The wire-format code here has no external dependencies — no miekg/dns.
-// It supports the record types listed in the constants block below, which
-// covers everything an authoritative server usually needs to answer
-// (A, NS, CNAME, SOA, PTR, MX, TXT, AAAA, SRV, CAA, ANY).
 package dns
 
 import (
@@ -16,7 +9,6 @@ import (
 	"strings"
 )
 
-// RR type codes (subset of RFC 1035 / 3596 / 2782 / 4034).
 const (
 	TypeA          uint16 = 1
 	TypeNS         uint16 = 2
@@ -38,14 +30,12 @@ const (
 	TypeANY        uint16 = 255
 	ClassIN        uint16 = 1
 
-	// Flag bits in the DNS header.
 	FlagQR uint16 = 0x8000 // Response
 	FlagAA uint16 = 0x0400 // Authoritative Answer
 	FlagTC uint16 = 0x0200 // Truncated
 	FlagRD uint16 = 0x0100 // Recursion Desired (echoed from request)
 	FlagRA uint16 = 0x0080 // Recursion Available
 
-	// RCODEs.
 	RcodeNoError        = 0
 	RcodeFormatError    = 1
 	RcodeServerFailure  = 2
@@ -53,14 +43,12 @@ const (
 	RcodeNotImplemented = 4
 	RcodeRefused        = 5
 
-	// Wire limits.
 	MaxUDPMessageSize = 512
 	maxNameLen        = 255
 	maxLabelLen       = 63
 	maxPointerHops    = 16
 )
 
-// TypeName maps a wire type code to its uppercase mnemonic.
 func TypeName(t uint16) string {
 	switch t {
 	case TypeA:
@@ -103,7 +91,6 @@ func TypeName(t uint16) string {
 	return "TYPE" + strconv.Itoa(int(t))
 }
 
-// TypeCode maps a mnemonic to its wire type code. Returns 0 on unknown.
 func TypeCode(name string) uint16 {
 	switch strings.ToUpper(name) {
 	case "A":
@@ -146,7 +133,6 @@ func TypeCode(name string) uint16 {
 	return 0
 }
 
-// Header is the fixed 12-byte DNS message header.
 type Header struct {
 	ID      uint16
 	Flags   uint16
@@ -156,14 +142,12 @@ type Header struct {
 	ARCount uint16
 }
 
-// Question is a single entry in the question section.
 type Question struct {
 	Name  string
 	Type  uint16
 	Class uint16
 }
 
-// RR is a decoded resource record. RData holds the raw wire-format rdata.
 type RR struct {
 	Name  string
 	Type  uint16
@@ -172,24 +156,17 @@ type RR struct {
 	RData []byte
 }
 
-// Message is a parsed DNS message.
 type Message struct {
 	Header
 	Questions  []Question
 	Answers    []RR
 	Authority  []RR
 	Additional []RR
-	// EDNS0 fields extracted from an OPT record in the additional section
-	// (RFC 6891). If the request has no OPT, EDNS0 is false and the other
-	// fields are zero.
 	EDNS0     bool
-	EDNS0DO   bool   // DNSSEC OK bit (RFC 3225)
-	EDNS0Size uint16 // requestor's max UDP payload size
+	EDNS0DO   bool
+	EDNS0Size uint16
 }
 
-// SetEDNS0 marks the message as EDNS0-capable so that Pack appends an OPT
-// record to the additional section (RFC 6891 §6.1). Size defaults to 4096
-// if zero.
 func (m *Message) SetEDNS0(size uint16, do bool) {
 	if size == 0 {
 		size = 4096
@@ -199,16 +176,14 @@ func (m *Message) SetEDNS0(size uint16, do bool) {
 	m.EDNS0DO = do
 }
 
-// SetRcode overwrites the RCODE bits in m.Flags.
 func SetRcode(m *Message, rcode int) {
 	m.Flags = (m.Flags &^ 0x000F) | uint16(rcode&0x0F)
 }
 
-// Rcode returns the current RCODE from m.Flags.
-func (m *Message) Rcode() int { return int(m.Flags & 0x000F) }
+func (m *Message) Rcode() int {
+	return int(m.Flags & 0x000F)
+}
 
-// NewResponse returns an empty response shell built from req: the ID is
-// copied, QR is set, RD is echoed, RA is left off (we're authoritative).
 func NewResponse(req *Message) *Message {
 	resp := &Message{
 		Header: Header{
@@ -220,11 +195,6 @@ func NewResponse(req *Message) *Message {
 	return resp
 }
 
-// -----------------------------------------------------------------------------
-// Parsing
-// -----------------------------------------------------------------------------
-
-// ParseMessage decodes buf into a *Message.
 func ParseMessage(buf []byte) (*Message, error) {
 	if len(buf) < 12 {
 		return nil, errors.New("dns: message too short")
@@ -270,15 +240,9 @@ func ParseMessage(buf []byte) (*Message, error) {
 	}
 	m.Additional, _, err = parseRRSection(buf, off, m.ARCount)
 	if err != nil {
-		// Additional section is informational for incoming queries.
-		// Degrade gracefully rather than dropping the packet.
 		m.ARCount = 0
 		m.Additional = nil
 	}
-	// Pull the EDNS0 OPT record out of the additional section if present.
-	// OPT is signalled by type=41 (RFC 6891 §6.1). Its class encodes the
-	// requestor's UDP payload size, and the DO bit lives in the top bit of
-	// the Z field (bits 16-31 of the "TTL" wire slot).
 	if len(m.Additional) > 0 {
 		filtered := m.Additional[:0]
 		for _, rr := range m.Additional {
@@ -330,13 +294,6 @@ func parseRRSection(buf []byte, off int, count uint16) ([]RR, int, error) {
 	return rrs, off, nil
 }
 
-// ParseName decodes a domain name starting at offset. It supports the
-// compression pointer scheme (RFC 1035 §4.1.4).
-//
-// Returns the name in canonical presentation form (labels separated by '.',
-// no trailing dot for non-root, root is "."), and the offset immediately
-// after the name field in the source buffer (which for pointer chains is
-// past the two-byte pointer, not past the target).
 func ParseName(buf []byte, offset int) (string, int, error) {
 	var (
 		labels    []string
@@ -352,7 +309,6 @@ func ParseName(buf []byte, offset int) (string, int, error) {
 		b := buf[next]
 		switch b & 0xC0 {
 		case 0x00:
-			// Label of length b.
 			if b == 0 {
 				next++
 				if !followed {
@@ -378,7 +334,6 @@ func ParseName(buf []byte, offset int) (string, int, error) {
 			}
 			next = end
 		case 0xC0:
-			// Pointer.
 			if next+1 >= len(buf) {
 				return "", 0, errors.New("truncated pointer")
 			}
@@ -392,7 +347,6 @@ func ParseName(buf []byte, offset int) (string, int, error) {
 				return "", 0, errors.New("pointer loop")
 			}
 			if ptr >= offset && !followed {
-				// Forward/self pointer — only backward references are legal.
 				return "", 0, errors.New("forward pointer")
 			}
 			next = ptr
@@ -403,22 +357,13 @@ func ParseName(buf []byte, offset int) (string, int, error) {
 }
 
 func totalLen(labels []string) int {
-	n := 1 // root
+	n := 1
 	for _, l := range labels {
 		n += 1 + len(l)
 	}
 	return n
 }
 
-// -----------------------------------------------------------------------------
-// Packing
-// -----------------------------------------------------------------------------
-
-// AppendName encodes name in wire format and appends it to buf.
-//
-// Compression pointers are intentionally NOT emitted here to keep the
-// builder simple; every name is written out in full. The extra bytes are
-// negligible for typical authoritative responses (a few RRs).
 func AppendName(buf []byte, name string) []byte {
 	name = strings.TrimSuffix(strings.ToLower(name), ".")
 	if name == "" || name == "." {
@@ -426,8 +371,6 @@ func AppendName(buf []byte, name string) []byte {
 	}
 	for _, label := range strings.Split(name, ".") {
 		if len(label) == 0 || len(label) > maxLabelLen {
-			// Emit a zero label so the packer produces *something* rather
-			// than corrupt output — parsers will treat it as root.
 			return append(buf, 0)
 		}
 		buf = append(buf, byte(len(label)))
@@ -436,8 +379,6 @@ func AppendName(buf []byte, name string) []byte {
 	return append(buf, 0)
 }
 
-// Pack serializes m into wire format, using buf as scratch space when it
-// has sufficient capacity.
 func (m *Message) Pack(buf []byte) ([]byte, error) {
 	if cap(buf) < 12 {
 		buf = make([]byte, 0, 512)
@@ -489,24 +430,20 @@ func (m *Message) Pack(buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-// AppendOPT appends an EDNS0 OPT record (RFC 6891) to buf: the owner name
-// is root, class carries the responder's UDP payload size, and the top bit
-// of the Z field mirrors the DO bit from the request when signing.
 func AppendOPT(buf []byte, size uint16, dobit bool) []byte {
 	if size == 0 {
 		size = 4096
 	}
-	buf = append(buf, 0) // root name
+	buf = append(buf, 0)
 	var hdr [10]byte
 	binary.BigEndian.PutUint16(hdr[0:2], TypeOPT)
 	binary.BigEndian.PutUint16(hdr[2:4], size)
-	// TTL slot: extended RCODE(1) | version(1) | Z(2). DO is bit 15 of Z.
 	var ttl uint32
 	if dobit {
 		ttl |= 0x00008000
 	}
 	binary.BigEndian.PutUint32(hdr[4:8], ttl)
-	binary.BigEndian.PutUint16(hdr[8:10], 0) // RDLENGTH — no options
+	binary.BigEndian.PutUint16(hdr[8:10], 0)
 	return append(buf, hdr[:]...)
 }
 
@@ -527,23 +464,6 @@ func appendRRs(buf []byte, rrs []RR) ([]byte, error) {
 	return buf, nil
 }
 
-// -----------------------------------------------------------------------------
-// RDATA encoding
-// -----------------------------------------------------------------------------
-
-// BuildRData converts a human-readable rdata string into wire format for a
-// given RR type. The formats mirror RFC 1035 zone-file syntax:
-//
-//	A     "192.0.2.1"
-//	AAAA  "2001:db8::1"
-//	NS    "ns1.example.com."
-//	CNAME "target.example.com."
-//	PTR   "host.example.com."
-//	MX    "10 mail.example.com."
-//	TXT   "quoted or bare string; each whitespace-separated token becomes one <character-string>"
-//	SOA   "ns admin serial refresh retry expire minimum"
-//	SRV   "priority weight port target."
-//	CAA   "flags tag value"  e.g. `0 issue "letsencrypt.org"` (RFC 8659)
 func BuildRData(rtype uint16, text string) ([]byte, error) {
 	text = strings.TrimSpace(text)
 	switch rtype {
@@ -591,9 +511,6 @@ func BuildRData(rtype uint16, text string) ([]byte, error) {
 		return buf, nil
 
 	case TypeTXT:
-		// Split into <character-string>s. If the user provides a quoted
-		// string, treat the whole thing as one; otherwise each whitespace
-		// token becomes its own <character-string>.
 		var parts []string
 		if len(text) >= 2 && text[0] == '"' && text[len(text)-1] == '"' {
 			parts = []string{text[1 : len(text)-1]}
@@ -639,8 +556,8 @@ func BuildRData(rtype uint16, text string) ([]byte, error) {
 			return nil, fmt.Errorf("dns: SOA minimum: %w", err)
 		}
 		buf := make([]byte, 0, 64)
-		buf = AppendName(buf, fields[0]) // primary NS
-		buf = AppendName(buf, fields[1]) // admin mailbox
+		buf = AppendName(buf, fields[0])
+		buf = AppendName(buf, fields[1])
 		var nums [20]byte
 		binary.BigEndian.PutUint32(nums[0:4], uint32(serial))
 		binary.BigEndian.PutUint32(nums[4:8], uint32(refresh))
@@ -675,9 +592,6 @@ func BuildRData(rtype uint16, text string) ([]byte, error) {
 		return buf, nil
 
 	case TypeCAA:
-		// Format: "<flags> <tag> <value>"
-		// flags is uint8, tag is alphanumeric (no dots), value may be quoted.
-		// e.g. `0 issue "letsencrypt.org"`
 		fields := strings.SplitN(text, " ", 3)
 		if len(fields) != 3 {
 			return nil, fmt.Errorf("dns: CAA rdata expects `flags tag value`, got %q", text)
@@ -691,7 +605,6 @@ func BuildRData(rtype uint16, text string) ([]byte, error) {
 			return nil, fmt.Errorf("dns: CAA tag length must be 1–255")
 		}
 		value := strings.TrimSpace(fields[2])
-		// Strip optional surrounding quotes from value.
 		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
 			value = value[1 : len(value)-1]
 		}

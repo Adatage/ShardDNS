@@ -15,16 +15,12 @@ import (
 	"github.com/Adatage/ShardDNS/internal/store"
 )
 
-// job carries a single inbound request from a reader goroutine to a worker.
-// Exactly one of udpAddr and tcpConn is set.
 type job struct {
 	data    []byte
 	udpAddr *net.UDPAddr
 	tcpConn net.Conn
 }
 
-// Server is the UDP+TCP authoritative DNS listener. Requests are handed off
-// to a fixed worker pool, and read buffers are recycled through a sync.Pool.
 type Server struct {
 	udpConn     *net.UDPConn
 	tcpListener net.Listener
@@ -37,8 +33,6 @@ type Server struct {
 	addr        string
 }
 
-// New constructs a Server. The listeners are not opened until Start is
-// called so callers can inject the store before binding.
 func New(cfg *config.Config, s *store.Store, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
@@ -46,14 +40,12 @@ func New(cfg *config.Config, s *store.Store, logger *slog.Logger) *Server {
 	srv := &Server{
 		handler: NewHandler(s, logger),
 		workers: cfg.Workers,
-		bufSize: cfg.DNSReadBufSize,
+		bufSize: 4096,
 		logger:  logger,
 		addr:    cfg.DNSAddr,
-		// Buffered jobs channel provides back-pressure without dropping
-		// packets when the worker pool briefly stalls.
 		jobs: make(chan job, cfg.Workers*4),
 	}
-	bufSize := cfg.DNSReadBufSize
+	bufSize := 4096
 	srv.pool.New = func() any {
 		b := make([]byte, bufSize)
 		return &b
@@ -61,10 +53,10 @@ func New(cfg *config.Config, s *store.Store, logger *slog.Logger) *Server {
 	return srv
 }
 
-// getBuf/putBuf recycle byte slices through the pool. We deliberately store
-// *[]byte rather than []byte to avoid the well-known allocation caused by
-// putting a slice header into an interface value.
-func (s *Server) getBuf() *[]byte { return s.pool.Get().(*[]byte) }
+func (s *Server) getBuf() *[]byte {
+	return s.pool.Get().(*[]byte)
+}
+
 func (s *Server) putBuf(b *[]byte) {
 	if cap(*b) < s.bufSize {
 		return
@@ -73,9 +65,6 @@ func (s *Server) putBuf(b *[]byte) {
 	s.pool.Put(b)
 }
 
-// Start opens both listeners, spins up the worker pool, and blocks until
-// ctx is cancelled. The two accept loops (UDP + TCP) run in their own
-// goroutines.
 func (s *Server) Start(ctx context.Context) error {
 	udpAddr, err := net.ResolveUDPAddr("udp", s.addr)
 	if err != nil {
@@ -98,7 +87,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 	var wg sync.WaitGroup
 
-	// Workers.
 	wg.Add(s.workers)
 	for i := 0; i < s.workers; i++ {
 		go func() {
@@ -107,14 +95,12 @@ func (s *Server) Start(ctx context.Context) error {
 		}()
 	}
 
-	// UDP reader.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		s.udpReadLoop(ctx)
 	}()
 
-	// TCP accept loop.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -123,8 +109,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 	<-ctx.Done()
 	s.logger.Info("DNS server shutting down")
-	// Closing the listeners unblocks the reader goroutines with a "use of
-	// closed network connection" error.
 	_ = s.udpConn.Close()
 	_ = s.tcpListener.Close()
 	close(s.jobs)
@@ -132,8 +116,6 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// udpReadLoop reads packets and enqueues jobs. A fresh buffer is taken
-// from the pool per packet so the worker can safely own it.
 func (s *Server) udpReadLoop(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
@@ -159,9 +141,6 @@ func (s *Server) udpReadLoop(ctx context.Context) {
 	}
 }
 
-// tcpAcceptLoop accepts TCP connections. Each connection is handled in its
-// own goroutine which reads DNS messages (2-byte length-prefixed) and
-// enqueues them onto the shared work queue.
 func (s *Server) tcpAcceptLoop(ctx context.Context) {
 	for {
 		conn, err := s.tcpListener.Accept()
@@ -176,9 +155,6 @@ func (s *Server) tcpAcceptLoop(ctx context.Context) {
 	}
 }
 
-// tcpConnLoop reads length-prefixed DNS messages from a single TCP
-// connection. Per RFC 1035 §4.2.2 each message is preceded by a two-byte
-// length in network byte order.
 func (s *Server) tcpConnLoop(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	for {
@@ -210,18 +186,15 @@ func (s *Server) tcpConnLoop(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// workerLoop pulls jobs from the queue and dispatches them.
 func (s *Server) workerLoop(ctx context.Context) {
 	for j := range s.jobs {
 		s.serve(ctx, j)
 	}
 }
 
-// serve parses, handles, packs, and sends a single request.
 func (s *Server) serve(ctx context.Context, j job) {
 	req, err := ParseMessage(j.data)
 	if err != nil {
-		// Return the UDP buffer to the pool if we took it.
 		if j.udpAddr != nil {
 			s.recycle(j.data)
 		}
@@ -231,7 +204,6 @@ func (s *Server) serve(ctx context.Context, j job) {
 
 	resp := s.handler.Handle(ctx, req)
 
-	// UDP response — truncate if it exceeds 512 bytes and set TC.
 	if j.udpAddr != nil {
 		outPtr := s.getBuf()
 		out, err := resp.Pack((*outPtr)[:0])
@@ -242,7 +214,6 @@ func (s *Server) serve(ctx context.Context, j job) {
 			return
 		}
 		if len(out) > MaxUDPMessageSize {
-			// Truncate: only keep the header + question section and set TC.
 			tcResp := &Message{
 				Header:    resp.Header,
 				Questions: resp.Questions,
@@ -256,15 +227,12 @@ func (s *Server) serve(ctx context.Context, j job) {
 		if _, err := s.udpConn.WriteToUDP(out, j.udpAddr); err != nil {
 			s.logger.Debug("udp write error", "err", err)
 		}
-		// Return the buffer we packed into if it was pool-owned. Note the
-		// out slice may have grown past bufSize; putBuf tolerates that.
 		bp := out
 		s.pool.Put(&bp)
 		s.recycle(j.data)
 		return
 	}
 
-	// TCP response — always length-prefixed.
 	out, err := resp.Pack(nil)
 	if err != nil {
 		s.logger.Warn("pack error", "err", err)
@@ -285,8 +253,6 @@ func (s *Server) serve(ctx context.Context, j job) {
 	}
 }
 
-// recycle returns a UDP read buffer to the pool. data is a sub-slice of the
-// pooled buffer; we re-extend to bufSize before Put.
 func (s *Server) recycle(data []byte) {
 	if cap(data) < s.bufSize {
 		return

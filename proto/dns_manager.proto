@@ -18,49 +18,6 @@ service DNSManager {
   rpc DeleteRecord(DeleteRecordRequest) returns (google.protobuf.Empty);
   rpc ListRecords(ListRecordsRequest)   returns (ListRecordsResponse);
   rpc GetRecords(GetRecordsRequest)     returns (ListRecordsResponse);
-
-  rpc EnableDNSSEC(EnableDNSSECRequest)     returns (DNSSECStatus);
-  rpc DisableDNSSEC(DisableDNSSECRequest)   returns (google.protobuf.Empty);
-  rpc GetDNSSECStatus(GetDNSSECStatusRequest) returns (DNSSECStatus);
-  rpc RotateKey(RotateKeyRequest)           returns (DNSSECStatus);
-}
-
-enum DNSAlgorithm {
-  ALGO_UNSPECIFIED = 0;
-  ALGO_ECDSAP256   = 13;
-  ALGO_ECDSAP384   = 14;
-  ALGO_ED25519     = 15;
-}
-
-message EnableDNSSECRequest {
-  string       zone      = 1;
-  DNSAlgorithm algorithm = 2;
-}
-
-message DisableDNSSECRequest   { string zone = 1; }
-message GetDNSSECStatusRequest { string zone = 1; }
-
-message RotateKeyRequest {
-  string       zone      = 1;
-  string       key_type  = 2;
-  DNSAlgorithm algorithm = 3;
-}
-
-message DNSSECStatus {
-  string zone    = 1;
-  bool   enabled = 2;
-  repeated DNSSECKey keys = 3;
-  string ds_record = 4;
-}
-
-message DNSSECKey {
-  int32        key_tag      = 1;
-  string       key_type     = 2;
-  DNSAlgorithm algorithm    = 3;
-  bool         active       = 4;
-  string       dnskey_rdata = 5;
-  google.protobuf.Timestamp created_at = 6;
-  google.protobuf.Timestamp expires_at = 7;
 }
 
 message Zone {
@@ -95,8 +52,14 @@ message CreateZoneRequest {
   int32  minimum_ttl = 7;
 }
 
-message GetZoneRequest    { string name = 1; }
-message DeleteZoneRequest { string name = 1; }
+message GetZoneRequest    {
+  string name = 1;
+}
+
+message DeleteZoneRequest {
+  string name = 1;
+}
+
 message UpdateZoneRequest {
   string name        = 1;
   string primary_ns  = 2;
@@ -107,8 +70,13 @@ message UpdateZoneRequest {
   int32  minimum_ttl = 7;
 }
 
-message ListZonesRequest  { int32 page_size = 1; string page_token = 2; }
-message ListZonesResponse { repeated Zone zones = 1; string next_page_token = 2; }
+message ListZonesRequest  {
+  int32 page_size = 1; string page_token = 2;
+}
+
+message ListZonesResponse {
+  repeated Zone zones = 1; string next_page_token = 2;
+}
 
 message CreateRecordRequest {
   string zone  = 1;
@@ -125,8 +93,13 @@ message DeleteRecordRequest {
   string rdata = 4;
 }
 
-message ListRecordsRequest  { string zone = 1; int32 page_size = 2; }
-message ListRecordsResponse { repeated Record records = 1; }
+message ListRecordsRequest  {
+  string zone = 1; int32 page_size = 2;
+}
+
+message ListRecordsResponse {
+  repeated Record records = 1;
+}
 
 message GetRecordsRequest {
   string zone = 1;

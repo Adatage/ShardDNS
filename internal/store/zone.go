@@ -10,10 +10,8 @@ import (
 	"github.com/gocql/gocql"
 )
 
-// ErrNotFound is returned when a lookup returns no rows.
 var ErrNotFound = errors.New("store: not found")
 
-// Zone describes an authoritative DNS zone (SOA metadata + identity).
 type Zone struct {
 	Name       string
 	PrimaryNS  string
@@ -27,14 +25,12 @@ type Zone struct {
 	UpdatedAt  time.Time
 }
 
-// Normalize a zone name for storage: lowercase, no trailing dot.
 func normalizeZone(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	name = strings.TrimSuffix(name, ".")
 	return name
 }
 
-// CreateZone inserts a new zone. Writes use LOCAL_QUORUM.
 func (s *Store) CreateZone(ctx context.Context, z *Zone) error {
 	z.Name = normalizeZone(z.Name)
 	if z.Name == "" {
@@ -55,7 +51,6 @@ func (s *Store) CreateZone(ctx context.Context, z *Zone) error {
 	).WithContext(ctx).Consistency(gocql.LocalQuorum).Exec()
 }
 
-// GetZone fetches a single zone by name (LOCAL_ONE).
 func (s *Store) GetZone(ctx context.Context, name string) (*Zone, error) {
 	name = normalizeZone(name)
 	z := &Zone{}
@@ -74,7 +69,6 @@ func (s *Store) GetZone(ctx context.Context, name string) (*Zone, error) {
 	return z, nil
 }
 
-// UpdateZone updates mutable fields on an existing zone. Serial is bumped.
 func (s *Store) UpdateZone(ctx context.Context, z *Zone) error {
 	z.Name = normalizeZone(z.Name)
 	if z.Name == "" {
@@ -92,9 +86,6 @@ func (s *Store) UpdateZone(ctx context.Context, z *Zone) error {
 	).WithContext(ctx).Consistency(gocql.LocalQuorum).Exec()
 }
 
-// DeleteZone removes a zone. Records under the zone are NOT cascaded here;
-// the caller (gRPC handler) is expected to delete records separately if
-// desired. The DELETE is idempotent.
 func (s *Store) DeleteZone(ctx context.Context, name string) error {
 	name = normalizeZone(name)
 	return s.Session.Query(s.stmts.deleteZone, name).
@@ -103,10 +94,6 @@ func (s *Store) DeleteZone(ctx context.Context, name string) error {
 		Exec()
 }
 
-// ListZones performs a paged scan over the zones table.
-//
-// Note: `zones` uses `name` as the partition key so a full scan hits every
-// node. We stream results with the driver's automatic paging.
 func (s *Store) ListZones(ctx context.Context, pageSize int, pageState []byte) ([]*Zone, []byte, error) {
 	if pageSize <= 0 {
 		pageSize = 100
@@ -132,7 +119,7 @@ func (s *Store) ListZones(ctx context.Context, pageSize int, pageState []byte) (
 		zones = append(zones, z)
 	}
 	next := iter.PageState()
-	// Copy — the underlying buffer is reused by the driver.
+
 	var nextCopy []byte
 	if len(next) > 0 {
 		nextCopy = append(nextCopy, next...)

@@ -1,8 +1,5 @@
 -- ShardDNS ScyllaDB Schema
 -- Run with: cqlsh -f cql/database.cql
---
--- For production clusters increase replication_factor to match your DC node count.
--- Tablets are disabled so the keyspace supports LWT and CDC if needed.
 
 CREATE KEYSPACE IF NOT EXISTS sharddns
     WITH replication = {
@@ -26,8 +23,6 @@ CREATE TABLE IF NOT EXISTS zones (
     updated_at  timestamp
 );
 
--- records partitioned by (zone, name) for O(1) DNS lookups
--- clustered by (type, rdata) to allow efficient type-filtered queries
 CREATE TABLE IF NOT EXISTS records (
     zone       text,
     name       text,
@@ -45,10 +40,8 @@ CREATE TABLE IF NOT EXISTS records (
       'sstable_compression': 'LZ4Compressor'
   };
 
--- Index to list all records for a zone efficiently
 CREATE INDEX IF NOT EXISTS records_by_zone ON records (zone);
 
--- DNSSEC signing keys, one row per (zone, flags, key_tag).
 CREATE TABLE IF NOT EXISTS dnssec_keys (
     zone        text,
     flags       int,

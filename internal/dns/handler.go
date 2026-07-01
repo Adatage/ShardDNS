@@ -10,14 +10,11 @@ import (
 	"github.com/Adatage/ShardDNS/internal/store"
 )
 
-// Handler answers DNS queries out of the ScyllaDB store. It contains no
-// per-query cache — every query is a fresh point-select.
 type Handler struct {
 	Store  *store.Store
 	Logger *slog.Logger
 }
 
-// NewHandler constructs a Handler.
 func NewHandler(s *store.Store, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
@@ -25,17 +22,13 @@ func NewHandler(s *store.Store, logger *slog.Logger) *Handler {
 	return &Handler{Store: s, Logger: logger}
 }
 
-// Handle processes a request and returns a response Message. Every query
-// gets its own 2-second budget derived from ctx.
 func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 	resp := NewResponse(req)
 
-	// Malformed / unsupported opcodes.
 	if len(req.Questions) == 0 {
 		SetRcode(resp, RcodeFormatError)
 		return resp
 	}
-	// We only implement OPCODE 0 (standard query). Bits 11-14 of Flags.
 	if opcode := (req.Flags >> 11) & 0x0F; opcode != 0 {
 		SetRcode(resp, RcodeNotImplemented)
 		return resp
@@ -44,8 +37,6 @@ func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 	qctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	// Only handle the first question — RFC 1035 allows only one question in
-	// practice; every real server does the same.
 	q := req.Questions[0]
 	qname := strings.ToLower(strings.TrimSuffix(q.Name, "."))
 	if qname == "" {
@@ -64,7 +55,6 @@ func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 		return resp
 	}
 
-	// Mark authoritative.
 	resp.Flags |= FlagAA
 
 	if q.Type == TypeANY {
@@ -81,7 +71,6 @@ func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 		return resp
 	}
 
-	// SOA queries at the apex are served directly from the SOA row.
 	if q.Type == TypeSOA {
 		h.appendRecords(resp, &resp.Answers, records, qname)
 		if len(resp.Answers) == 0 {
@@ -91,12 +80,10 @@ func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 	}
 
 	if len(records) == 0 {
-		// CNAME chase (one hop only — chains are rare in authoritative data).
 		if q.Type != TypeCNAME {
 			cnames, err := h.Store.LookupRecords(qctx, zone, qname, "CNAME")
 			if err == nil && len(cnames) > 0 {
 				h.appendRecords(resp, &resp.Answers, cnames, qname)
-				// Resolve the CNAME target *within the same zone* one hop.
 				target := strings.TrimSuffix(strings.ToLower(cnames[0].RData), ".")
 				if target != "" && strings.HasSuffix(target, zone) {
 					more, err := h.Store.LookupRecords(qctx, zone, target, qtypeName)
@@ -116,7 +103,6 @@ func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 	return resp
 }
 
-// answerANY returns every record for (zone, qname).
 func (h *Handler) answerANY(ctx context.Context, resp *Message, zone, qname string) {
 	records, err := h.Store.LookupAllTypes(ctx, zone, qname)
 	if err != nil {
@@ -132,8 +118,6 @@ func (h *Handler) answerANY(ctx context.Context, resp *Message, zone, qname stri
 	h.appendRecords(resp, &resp.Answers, records, qname)
 }
 
-// appendRecords converts store.Record values into wire-format RRs and
-// appends them to the target section.
 func (h *Handler) appendRecords(resp *Message, section *[]RR, records []*store.Record, qname string) {
 	for _, r := range records {
 		typ := TypeCode(r.Type)
@@ -148,7 +132,6 @@ func (h *Handler) appendRecords(resp *Message, section *[]RR, records []*store.R
 				"zone", r.Zone, "name", r.Name, "type", r.Type, "err", err)
 			continue
 		}
-		// Emit the qname (not the stored "@") so responses look natural.
 		name := qname
 		if name == "" {
 			name = r.Zone
@@ -163,8 +146,6 @@ func (h *Handler) appendRecords(resp *Message, section *[]RR, records []*store.R
 	}
 }
 
-// setNXDomain sets NXDOMAIN and adds the zone's SOA to the Authority
-// section so resolvers can cache the negative response (RFC 2308).
 func (h *Handler) setNXDomain(ctx context.Context, resp *Message, zone string) {
 	SetRcode(resp, RcodeNXDomain)
 	soa, err := h.Store.GetSOA(ctx, zone)
@@ -188,11 +169,6 @@ func (h *Handler) setNXDomain(ctx context.Context, resp *Message, zone string) {
 	})
 }
 
-// findZone finds the deepest zone (longest suffix) that matches qname by
-// stripping labels one at a time and probing the zones table.
-//
-// This is a hot path — but zone lookups are cheap point-selects and there
-// are usually very few label strips before a hit (or a definitive miss).
 func (h *Handler) findZone(ctx context.Context, qname string) (string, error) {
 	name := qname
 	for {

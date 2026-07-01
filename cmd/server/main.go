@@ -1,6 +1,3 @@
-// Command sharddns starts the authoritative DNS server and the gRPC admin
-// API. Configuration is loaded exclusively from the environment (see
-// internal/config).
 package main
 
 import (
@@ -31,8 +28,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Connect to ScyllaDB with retry — ScyllaDB may take a while to become
-	// ready when the whole stack is starting via docker compose.
 	st, err := connectStore(ctx, cfg, logger)
 	if err != nil {
 		logger.Error("failed to connect to ScyllaDB", "err", err)
@@ -40,20 +35,16 @@ func main() {
 	}
 	defer st.Close()
 
-	// DNS server.
 	dnsServer := dnssrv.New(cfg, st, logger)
 
-	// gRPC server.
 	grpcSrv := grpc.NewServer()
 	dnsmgr.RegisterDNSManagerServer(grpcSrv, grpcserver.New(st))
 
-	// Signal handling.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	var wg sync.WaitGroup
 
-	// DNS.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -63,7 +54,6 @@ func main() {
 		}
 	}()
 
-	// gRPC.
 	wg.Add(1)
 	lis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
@@ -79,7 +69,6 @@ func main() {
 		}
 	}()
 
-	// Wait for shutdown signal.
 	select {
 	case sig := <-sigCh:
 		logger.Info("received signal, shutting down", "signal", sig.String())
@@ -87,7 +76,6 @@ func main() {
 	}
 	cancel()
 
-	// Graceful stop of gRPC first (fast), then wait for DNS to drain.
 	stopped := make(chan struct{})
 	go func() {
 		grpcSrv.GracefulStop()
@@ -103,9 +91,6 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-// connectStore retries the initial ScyllaDB connection with a fixed
-// 1-second backoff up to 30 times so that startup order in docker compose
-// doesn't matter.
 func connectStore(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*store.Store, error) {
 	var lastErr error
 	for attempt := 1; attempt <= 30; attempt++ {

@@ -1,13 +1,3 @@
-// Package store is the ScyllaDB-backed persistence layer for ShardDNS.
-//
-// The design goals are:
-//   - Every DNS query hits ScyllaDB directly (no in-process cache layer). We
-//     rely on ScyllaDB's per-shard row cache and NVMe throughput instead of
-//     duplicating state in the DNS server.
-//   - All hot statements are prepared once at startup so the driver reuses
-//     the same query plan on every invocation.
-//   - Reads use LOCAL_ONE for lowest latency; writes use LOCAL_QUORUM for
-//     durability.
 package store
 
 import (
@@ -18,9 +8,6 @@ import (
 	"github.com/gocql/gocql"
 )
 
-// stmts holds the CQL text for every prepared statement used by the store.
-// gocql caches prepared statements per-session keyed by the query text, so
-// re-executing the same string amounts to a lookup in an in-memory map.
 type stmts struct {
 	insertZone string
 	selectZone string
@@ -37,20 +24,11 @@ type stmts struct {
 	lookupRecords     string
 }
 
-// Store is the ScyllaDB-backed persistence layer.
 type Store struct {
 	Session *gocql.Session
 	stmts   stmts
 }
 
-// Open connects to ScyllaDB and returns a ready-to-use Store.
-//
-// The connection is tuned for high throughput:
-//   - NumConns = max(workers/2, 4) per host so each shard has multiple
-//     in-flight TCP connections.
-//   - Retry policy uses exponential backoff with a hard cap of 3 attempts.
-//   - Reads default to LOCAL_ONE, writes to LOCAL_QUORUM. Individual queries
-//     override consistency as needed.
 func Open(ctx context.Context, hosts []string, keyspace, username, password string, workers int) (*Store, error) {
 	if len(hosts) == 0 {
 		return nil, fmt.Errorf("store: no ScyllaDB hosts provided")
@@ -89,7 +67,6 @@ func Open(ctx context.Context, hosts []string, keyspace, username, password stri
 		return nil, fmt.Errorf("store: create session: %w", err)
 	}
 
-	// Sanity check that the keyspace is reachable.
 	if err := sess.Query("SELECT now() FROM system.local").WithContext(ctx).Exec(); err != nil {
 		sess.Close()
 		return nil, fmt.Errorf("store: ping: %w", err)
@@ -127,7 +104,6 @@ func Open(ctx context.Context, hosts []string, keyspace, username, password stri
 	return s, nil
 }
 
-// Close releases the underlying gocql session.
 func (s *Store) Close() {
 	if s != nil && s.Session != nil {
 		s.Session.Close()
