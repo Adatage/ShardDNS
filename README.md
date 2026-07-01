@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![ScyllaDB](https://img.shields.io/badge/storage-ScyllaDB-53CFCD?logo=apache-cassandra&logoColor=white)](https://www.scylladb.com/)
 [![gRPC](https://img.shields.io/badge/control--plane-gRPC-244c5a?logo=grpc&logoColor=white)](https://grpc.io/)
-[![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
+[![Docker](https://img.shields.io/badge/ghcr.io-sharddns-2496ED?logo=docker&logoColor=white)](https://github.com/Adatage/ShardDNS/pkgs/container/sharddns)
 
 </div>
 
@@ -50,6 +50,26 @@ ShardDNS is a high-performance authoritative DNS server written in Go. It uses *
 
 ---
 
+## Container Image
+
+Images are published to the **GitHub Container Registry** on every push to `main` and on version tags.
+
+```bash
+# Latest
+docker pull ghcr.io/adatage/sharddns:latest
+
+# Specific version
+docker pull ghcr.io/adatage/sharddns:v1.2.3
+```
+
+| Tag pattern        | When published                  |
+|--------------------|---------------------------------|
+| `latest`           | Every push to `main`            |
+| `v1.2.3`           | On git tag `v1.2.3`             |
+| `1.2`              | On git tag `v1.2.x`             |
+
+---
+
 ## Quick Start
 
 ### Docker Compose (Recommended)
@@ -58,6 +78,13 @@ Spin up ScyllaDB, apply the schema, and start ShardDNS in one command:
 
 ```bash
 docker compose up -d
+```
+
+The default `docker-compose.yml` builds from source. To use the pre-built image from GHCR instead, set the `sharddns` service image:
+
+```yaml
+sharddns:
+  image: ghcr.io/adatage/sharddns:latest
 ```
 
 This starts:
@@ -78,6 +105,18 @@ make run            # build and run the DNS server
 Binaries are output to `bin/`:
 - `bin/sharddns` — DNS + gRPC server
 - `bin/sharddns-cli` — management CLI
+
+### Go Client
+
+The generated gRPC client package is committed to this repo and importable directly:
+
+```bash
+go get github.com/Adatage/ShardDNS/api
+```
+
+```go
+import dnsmgr "github.com/Adatage/ShardDNS/api"
+```
 
 ---
 
@@ -175,6 +214,8 @@ make docker-up    # start ScyllaDB + ShardDNS via Docker Compose
 make docker-down  # stop all containers
 make clean        # remove build artifacts
 ```
+
+> **Note:** The `api/` directory (generated protobuf code) is committed to the repo. After editing any `.proto` file, run `make proto` and commit the updated `api/` files. CI will fail if the committed files are out of sync with the proto definitions.
 
 ---
 
