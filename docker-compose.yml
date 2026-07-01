@@ -1,0 +1,48 @@
+services:
+  scylla:
+    image: scylladb/scylla:6.2
+    container_name: sharddns-scylla
+    command: --smp 2 --memory 2G --overprovisioned 1 --developer-mode 1
+    ports:
+      - "9042:9042"
+    volumes:
+      - scylla-data:/var/lib/scylla
+      - ./cql:/cql:ro
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  schema-init:
+    image: scylladb/scylla:6.2
+    container_name: sharddns-schema-init
+    depends_on:
+      scylla:
+        condition: service_healthy
+    volumes:
+      - ./cql:/cql:ro
+    entrypoint: ["cqlsh", "scylla", "-f", "/cql/database.cql"]
+    restart: "no"
+
+  sharddns:
+    build: .
+    container_name: sharddns
+    depends_on:
+      schema-init:
+        condition: service_completed_successfully
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "9053:9053"
+    environment:
+      SCYLLA_HOSTS: scylla
+      SCYLLA_KEYSPACE: sharddns
+      DNS_ADDR: :53
+      GRPC_ADDR: :9053
+      WORKERS: 0
+      LOG_LEVEL: debug
+
+volumes:
+  scylla-data:
