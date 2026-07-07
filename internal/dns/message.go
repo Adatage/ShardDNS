@@ -513,7 +513,6 @@ func BuildRData(rtype uint16, text string) ([]byte, error) {
 	case TypeTXT:
 		var parts []string
 		if strings.HasPrefix(text, `"`) {
-			// Parse one or more quoted TXT strings: "part1" "part2" ...
 			rest := text
 			for len(rest) > 0 {
 				rest = strings.TrimSpace(rest)
@@ -534,8 +533,6 @@ func BuildRData(rtype uint16, text string) ([]byte, error) {
 				parts = []string{""}
 			}
 		} else {
-			// Unquoted: treat entire value as one TXT string,
-			// chunking at 255-byte boundaries per RFC 1035.
 			s := text
 			for len(s) > 255 {
 				parts = append(parts, s[:255])
