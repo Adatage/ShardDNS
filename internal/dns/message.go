@@ -512,19 +512,39 @@ func BuildRData(rtype uint16, text string) ([]byte, error) {
 
 	case TypeTXT:
 		var parts []string
-		if len(text) >= 2 && text[0] == '"' && text[len(text)-1] == '"' {
-			parts = []string{text[1 : len(text)-1]}
-		} else {
-			parts = strings.Fields(text)
+		if strings.HasPrefix(text, `"`) {
+			// Parse one or more quoted TXT strings: "part1" "part2" ...
+			rest := text
+			for len(rest) > 0 {
+				rest = strings.TrimSpace(rest)
+				if len(rest) == 0 {
+					break
+				}
+				if rest[0] != '"' {
+					return nil, fmt.Errorf("dns: unexpected token in TXT rdata: %q", rest)
+				}
+				end := strings.Index(rest[1:], `"`)
+				if end < 0 {
+					return nil, fmt.Errorf("dns: unterminated quoted string in TXT rdata")
+				}
+				parts = append(parts, rest[1:end+1])
+				rest = rest[end+2:]
+			}
 			if len(parts) == 0 {
 				parts = []string{""}
 			}
+		} else {
+			// Unquoted: treat entire value as one TXT string,
+			// chunking at 255-byte boundaries per RFC 1035.
+			s := text
+			for len(s) > 255 {
+				parts = append(parts, s[:255])
+				s = s[255:]
+			}
+			parts = append(parts, s)
 		}
 		buf := make([]byte, 0, len(text)+len(parts))
 		for _, p := range parts {
-			if len(p) > 255 {
-				return nil, fmt.Errorf("dns: TXT string exceeds 255 bytes")
-			}
 			buf = append(buf, byte(len(p)))
 			buf = append(buf, p...)
 		}
