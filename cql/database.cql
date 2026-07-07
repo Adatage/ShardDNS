@@ -4,13 +4,19 @@
 CREATE KEYSPACE IF NOT EXISTS sharddns
     WITH replication = {
         'class': 'SimpleStrategy',
-        'replication_factor': '1'
+        'replication_factor': '3'
     }
     AND durable_writes = true;
 
-USE sharddns;
+CREATE ROLE sharddns_user
+    WITH PASSWORD = 'SuperSecretPassword'
+    AND LOGIN = TRUE;
 
-CREATE TABLE IF NOT EXISTS zones (
+GRANT ALL PERMISSIONS
+    ON KEYSPACE sharddns
+    TO sharddns_user;
+
+CREATE TABLE IF NOT EXISTS sharddns.zones (
     name        text PRIMARY KEY,
     primary_ns  text,
     admin_email text,
@@ -23,7 +29,7 @@ CREATE TABLE IF NOT EXISTS zones (
     updated_at  timestamp
 );
 
-CREATE TABLE IF NOT EXISTS records (
+CREATE TABLE IF NOT EXISTS sharddns.records (
     zone       text,
     name       text,
     type       text,
@@ -40,17 +46,4 @@ CREATE TABLE IF NOT EXISTS records (
       'sstable_compression': 'LZ4Compressor'
   };
 
-CREATE INDEX IF NOT EXISTS records_by_zone ON records (zone);
-
-CREATE TABLE IF NOT EXISTS dnssec_keys (
-    zone        text,
-    flags       int,
-    key_tag     int,
-    algorithm   int,
-    public_key  blob,
-    private_key blob,
-    active      boolean,
-    created_at  timestamp,
-    expires_at  timestamp,
-    PRIMARY KEY ((zone), flags, key_tag)
-);
+CREATE INDEX IF NOT EXISTS records_by_zone ON sharddns.records (zone);
