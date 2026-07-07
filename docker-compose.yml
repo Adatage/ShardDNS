@@ -32,6 +32,8 @@ services:
     depends_on:
       schema-init:
         condition: service_completed_successfully
+    cap_add:
+      - NET_BIND_SERVICE
     ports:
       - "53:53/udp"
       - "53:53/tcp"
