@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -158,6 +159,26 @@ func (s *Store) LookupRecords(ctx context.Context, zone, name, rtype string) ([]
 		return nil, err
 	}
 	return records, nil
+}
+
+func (s *Store) NameExists(ctx context.Context, zone, name string) (bool, error) {
+	zone = normalizeZone(zone)
+	name = normalizeName(name)
+	if name == zone {
+		name = "@"
+	}
+	var typ string
+	err := s.Session.Query(
+		`SELECT type FROM records WHERE zone = ? AND name = ? LIMIT 1`,
+		zone, name,
+	).WithContext(ctx).Consistency(gocql.LocalOne).Scan(&typ)
+	if err != nil {
+		if errors.Is(err, gocql.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) LookupAllTypes(ctx context.Context, zone, name string) ([]*Record, error) {

@@ -74,7 +74,19 @@ func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 	if q.Type == TypeSOA {
 		h.appendRecords(resp, &resp.Answers, records, qname)
 		if len(resp.Answers) == 0 {
-			h.setNXDomain(qctx, resp, zone)
+			// No SOA stored for this name. Determine whether the name exists at all
+			// so we can return NXDOMAIN vs NODATA correctly (RFC 2308).
+			exists, err := h.Store.NameExists(qctx, zone, qname)
+			if err != nil {
+				h.Logger.WarnContext(qctx, "NameExists failed", "zone", zone, "name", qname, "err", err)
+				SetRcode(resp, RcodeServerFailure)
+				return resp
+			}
+			if exists {
+				h.setNOData(qctx, resp, zone)
+			} else {
+				h.setNXDomain(qctx, resp, zone)
+			}
 		}
 		return resp
 	}
@@ -82,7 +94,14 @@ func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 	if len(records) == 0 {
 		if q.Type != TypeCNAME {
 			cnames, err := h.Store.LookupRecords(qctx, zone, qname, "CNAME")
-			if err == nil && len(cnames) > 0 {
+			if err != nil {
+				// A DB error here must not silently become NXDOMAIN.
+				h.Logger.ErrorContext(qctx, "LookupRecords (CNAME) failed",
+					"zone", zone, "name", qname, "err", err)
+				SetRcode(resp, RcodeServerFailure)
+				return resp
+			}
+			if len(cnames) > 0 {
 				h.appendRecords(resp, &resp.Answers, cnames, qname)
 				target := strings.TrimSuffix(strings.ToLower(cnames[0].RData), ".")
 				if target != "" && strings.HasSuffix(target, zone) {
@@ -95,7 +114,20 @@ func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 			}
 		}
 
-		h.setNXDomain(qctx, resp, zone)
+		// No records of the queried type and no CNAME. Use NameExists to
+		// distinguish a true NXDOMAIN (name absent) from NODATA (name present,
+		// type absent) so we never cache a false NXDOMAIN for a real name.
+		exists, err := h.Store.NameExists(qctx, zone, qname)
+		if err != nil {
+			h.Logger.WarnContext(qctx, "NameExists failed", "zone", zone, "name", qname, "err", err)
+			SetRcode(resp, RcodeServerFailure)
+			return resp
+		}
+		if exists {
+			h.setNOData(qctx, resp, zone)
+		} else {
+			h.setNXDomain(qctx, resp, zone)
+		}
 		return resp
 	}
 
@@ -148,6 +180,17 @@ func (h *Handler) appendRecords(resp *Message, section *[]RR, records []*store.R
 
 func (h *Handler) setNXDomain(ctx context.Context, resp *Message, zone string) {
 	SetRcode(resp, RcodeNXDomain)
+	h.appendSOAAuthority(ctx, resp, zone)
+}
+
+// setNOData sends a NODATA response (NOERROR, empty ANSWER, SOA in AUTHORITY).
+// Use this when the queried name exists in the zone but has no records of the
+// requested type (RFC 2308 §2.2).
+func (h *Handler) setNOData(ctx context.Context, resp *Message, zone string) {
+	h.appendSOAAuthority(ctx, resp, zone)
+}
+
+func (h *Handler) appendSOAAuthority(ctx context.Context, resp *Message, zone string) {
 	soa, err := h.Store.GetSOA(ctx, zone)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
