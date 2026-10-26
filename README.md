@@ -2,13 +2,13 @@
 
 # ⚡ ShardDNS
 
-**A stateless, cloud-native DNS server built for high throughput — backed by ScyllaDB and controlled via gRPC.**
+**A stateless, high-throughput authoritative DNS server backed by PostgreSQL, with a ConnectRPC control plane, an in-memory cache and optional NATS cache invalidation.**
 
 [![CI](https://github.com/Adatage/ShardDNS/actions/workflows/ci.yml/badge.svg)](https://github.com/Adatage/ShardDNS/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/badge/go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![ScyllaDB](https://img.shields.io/badge/storage-ScyllaDB-53CFCD?logo=apache-cassandra&logoColor=white)](https://www.scylladb.com/)
-[![gRPC](https://img.shields.io/badge/control--plane-gRPC-244c5a?logo=grpc&logoColor=white)](https://grpc.io/)
+[![PostgreSQL](https://img.shields.io/badge/storage-PostgreSQL-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![ConnectRPC](https://img.shields.io/badge/control--plane-ConnectRPC-244c5a)](https://connectrpc.com/)
 [![Docker](https://img.shields.io/badge/ghcr.io-sharddns-2496ED?logo=docker&logoColor=white)](https://github.com/Adatage/ShardDNS/pkgs/container/sharddns)
 
 </div>
@@ -17,205 +17,238 @@
 
 ## Overview
 
-ShardDNS is a high-performance authoritative DNS server written in Go. It uses **ScyllaDB** as its only storage backend, making every server instance completely stateless and horizontally scalable. Zones and records are managed at runtime through a **gRPC API** — no config files, no restarts.
+ShardDNS is an authoritative DNS server written in Go. PostgreSQL is the only source of truth, so every `sharddnsd` instance is stateless and horizontally scalable. Zones and records are managed at runtime through a **ConnectRPC** API (Connect, gRPC and gRPC-Web clients all work), with no config files and no restarts.
 
-### Key Features
+### Features
 
-- 🚀 **High Throughput** — concurrent worker pool with buffer pooling for zero-allocation hot paths
-- 🌐 **UDP & TCP** — full RFC-compliant DNS over both transports with TC-bit truncation
-- 🗄️ **ScyllaDB Backend** — LZ4-compressed records table with Leveled Compaction for low-latency lookups
-- 🔌 **gRPC Control Plane** — manage zones and records dynamically without restarts
-- ☁️ **Cloud Native** — stateless design, Docker-ready, environment-variable configuration
-- 🔁 **CNAME Chaining** — automatic in-zone CNAME target resolution
-- 📋 **SOA & NXDOMAIN** — authoritative negative responses with SOA records in the authority section
+- **UDP and TCP** with EDNS0, correct TC-bit truncation, case-preserving answers (0x20 safe) and bounded TCP connections
+- **In-memory cache** (opt-in) with negative caching, request coalescing and bounded memory
+- **Multi-instance cache invalidation** over NATS (opt-in), carried as protobuf change events
+- **Record types:** A, AAAA, NS, CNAME, DNAME, PTR, MX, TXT, SRV, CAA, NAPTR, SSHFP, TLSA, DS, DNSKEY, HINFO; SOA is generated from the zone
+- **Correct negative answers:** NXDOMAIN vs NODATA (including empty non-terminals), SOA in the authority section with RFC 2308 TTLs
+- **Wildcards** (`*.example.com`), **CNAME chains** (also across zones served by the same instance), **DNAME** synthesis, **delegations** with glue, and additional-section processing for MX, NS and SRV
+- **Validated writes:** record data is parsed on create, CNAME exclusivity is enforced, RRset TTLs stay consistent, and the zone serial advances on every change
+- **Operations:** auto-migrating schema, `/healthz` and `/readyz`, optional bearer-token auth, graceful shutdown, JSON logs, gRPC reflection
 
 ---
 
 ## Architecture
 
 ```
-                ┌──────────────┐
-  DNS Clients   │   ShardDNS   │   gRPC Clients
- ─────────────► │              │ ◄──────────────
-  UDP / TCP :53 │  Worker Pool │  :9053
-                │              │
-                └──────┬───────┘
-                       │
-                ┌──────▼───────┐
-                │   ScyllaDB   │
-                │  zones       │
-                │  records     │
-                └──────────────┘
+                     ┌────────────────────────────┐
+   DNS clients       │         sharddnsd          │      sharddns CLI / any
+ ──────────────────► │  UDP/TCP :53   API :9053   │ ◄──  Connect, gRPC client
+                     │  ┌────────────────────┐    │
+                     │  │ in-memory cache    │    │
+                     │  └─────────┬──────────┘    │
+                     └───────┬────┴───────┬───────┘
+                             │            │ change events (optional)
+                      ┌──────▼─────┐   ┌──▼───┐
+                      │ PostgreSQL │   │ NATS │──► other sharddnsd instances
+                      └────────────┘   └──────┘
 ```
 
----
-
-## Container Image
-
-Images are published to the **GitHub Container Registry** on every push to `main` and on version tags.
-
-```bash
-# Latest
-docker pull ghcr.io/adatage/sharddns:latest
-
-# Specific version
-docker pull ghcr.io/adatage/sharddns:v1.2.3
-```
-
-| Tag pattern        | When published                  |
-|--------------------|---------------------------------|
-| `latest`           | Every push to `main`            |
-| `v1.2.3`           | On git tag `v1.2.3`             |
-| `1.2`              | On git tag `v1.2.x`             |
+On a write, the instance that handled it invalidates its own cache and publishes a `ChangeEvent`. Every other instance subscribed to the subject invalidates the affected names. Without NATS, `CACHE_TTL` bounds how stale another instance can be.
 
 ---
 
 ## Quick Start
 
-### Docker Compose (Recommended)
-
-Spin up ScyllaDB, apply the schema, and start ShardDNS in one command:
+### Docker Compose
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-The default `docker-compose.yml` builds from source. To use the pre-built image from GHCR instead, set the `sharddns` service image:
-
-```yaml
-sharddns:
-  image: ghcr.io/adatage/sharddns:latest
-```
-
-This starts:
-- **ScyllaDB** on port `9042`
-- **ShardDNS** DNS server on port `53` (UDP/TCP)
-- **ShardDNS** gRPC server on port `9053`
-
-### Build from Source
+This starts PostgreSQL, NATS and `sharddnsd` (cache and NATS invalidation enabled). The DNS server listens on `53/udp+tcp` and the API on `9053`. Override host ports with `DNS_PORT` and `API_PORT`, and set `API_TOKEN` to require authentication.
 
 ```bash
-# Install buf (for protobuf generation)
-# https://buf.build/docs/installation
-
-make build-all      # generate proto + build both binaries
-make run            # build and run the DNS server
+docker compose exec sharddnsd sharddns zone create example.com
+docker compose exec sharddnsd sharddns record add example.com www A 300 93.184.216.34
+dig @127.0.0.1 www.example.com A
 ```
 
-Binaries are output to `bin/`:
-- `bin/sharddns` — DNS + gRPC server
-- `bin/sharddns-cli` — management CLI
-
-### Go Client
-
-The generated gRPC client package is committed to this repo and importable directly:
+### Build from source
 
 ```bash
-go get github.com/Adatage/ShardDNS/api
+make build        # bin/sharddnsd, bin/sharddns, bin/dnsbench
+export DATABASE_URL=postgres://sharddns:sharddns@127.0.0.1:5432/sharddns?sslmode=disable
+sudo setcap cap_net_bind_service=+ep bin/sharddnsd    # or set DNS_ADDR=:5353
+./bin/sharddnsd
 ```
 
-```go
-import dnsmgr "github.com/Adatage/ShardDNS/api"
+### Container image
+
+```bash
+docker pull ghcr.io/adatage/sharddns:latest
 ```
+
+| Tag      | When published         |
+|----------|------------------------|
+| `latest` | every push to `main`   |
+| `2.0.0`  | on git tag `v2.0.0`    |
+| `2.0`    | on git tag `v2.0.x`    |
+
+The image contains `sharddnsd` (entrypoint) and the `sharddns` CLI.
 
 ---
 
 ## Configuration
 
-ShardDNS is configured entirely via environment variables (see [`.env.example`](.env.example)):
+All configuration is through environment variables (see [`.env.example`](.env.example)).
 
-| Variable           | Default       | Description                                        |
-|--------------------|---------------|----------------------------------------------------|
-| `DNS_ADDR`         | `:53`         | Address the DNS server listens on (UDP & TCP)      |
-| `GRPC_ADDR`        | `:9053`       | Address the gRPC management server listens on      |
-| `WORKERS`          | `0`           | Worker goroutines (`0` = `runtime.NumCPU()`)       |
-| `LOG_LEVEL`        | `info`        | Log level: `debug`, `info`, `warn`, `error`        |
-| `SCYLLA_HOSTS`     | `127.0.0.1`   | Comma-separated ScyllaDB hostnames or IPs          |
-| `SCYLLA_KEYSPACE`  | `sharddns`    | ScyllaDB keyspace                                  |
-| `SCYLLA_USERNAME`  | *(empty)*     | ScyllaDB username (optional)                       |
-| `SCYLLA_PASSWORD`  | *(empty)*     | ScyllaDB password (optional)                       |
+| Variable            | Default            | Description                                                              |
+|---------------------|--------------------|--------------------------------------------------------------------------|
+| `DATABASE_URL`      | *(required)*       | PostgreSQL connection URL                                                |
+| `DB_MAX_CONNS`      | `max(8, 2×CPUs)`   | Connection pool size                                                     |
+| `AUTO_MIGRATE`      | `true`             | Apply the embedded schema on startup                                     |
+| `DNS_ADDR`          | `:53`              | DNS listen address (UDP and TCP)                                         |
+| `API_ADDR`          | `:9053`            | ConnectRPC API listen address                                            |
+| `API_TOKEN`         | *(empty)*          | If set, API calls must send `Authorization: Bearer <token>`              |
+| `WORKERS`           | `0`                | DNS worker goroutines (`0` = 4 × CPUs)                                   |
+| `LOG_LEVEL`         | `info`             | `debug`, `info`, `warn`, `error`                                         |
+| `CACHE_ENABLED`     | `false`            | Enable the in-memory cache                                               |
+| `CACHE_TTL`         | `60s`              | Maximum age of a cache entry                                             |
+| `CACHE_MAX_ENTRIES` | `100000`           | Upper bound on cached names                                              |
+| `NATS_URL`          | *(empty)*          | Enable change-event publishing and cache invalidation over NATS          |
+| `NATS_SUBJECT`      | `sharddns.changes` | Subject used for change events                                           |
+
+Run several instances against one database, enable the cache and point them at the same NATS server to scale reads horizontally.
 
 ---
 
-## gRPC API
+## API
 
-The control plane is defined in [`proto/dns_manager.proto`](proto/dns_manager.proto) and exposed on the `GRPC_ADDR` port.
+The service is defined in [`proto/sharddns/v1/sharddns.proto`](proto/sharddns/v1/sharddns.proto) and served at `/sharddns.v1.DNSManager/`. It speaks the Connect, gRPC and gRPC-Web protocols over HTTP/1.1 and cleartext HTTP/2, and supports server reflection.
 
-### Zone Management
+| RPC            | Description                                                      |
+|----------------|------------------------------------------------------------------|
+| `CreateZone`   | Create a zone (SOA defaults are filled in)                       |
+| `GetZone`      | Fetch a zone                                                     |
+| `UpdateZone`   | Change SOA parameters (zero values keep the current setting)     |
+| `DeleteZone`   | Delete a zone and all of its records                             |
+| `ListZones`    | Paginated list of zones                                          |
+| `CreateRecord` | Add a record (idempotent for identical data, validated)          |
+| `DeleteRecord` | Remove one record by zone, name, type and rdata                  |
+| `ListRecords`  | Paginated list of the records in a zone                          |
+| `GetRecords`   | Records for a name and type                                      |
 
-| RPC           | Description                     |
-|---------------|---------------------------------|
-| `CreateZone`  | Create a new DNS zone           |
-| `GetZone`     | Fetch a zone by name            |
-| `UpdateZone`  | Update SOA parameters of a zone |
-| `DeleteZone`  | Delete a zone                   |
-| `ListZones`   | Paginated list of all zones     |
+Record names may be relative (`www`), absolute (`www.example.com`) or `@` for the apex. Names inside rdata (NS, CNAME, MX, SRV ...) are fully qualified.
 
-### Record Management
+| Type    | rdata format                                      |
+|---------|---------------------------------------------------|
+| `A`, `AAAA` | IP address                                    |
+| `NS`, `CNAME`, `DNAME`, `PTR` | domain name                 |
+| `MX`    | `10 mail.example.com.`                            |
+| `TXT`   | `v=spf1 -all` or `"part one" "part two"`          |
+| `SRV`   | `10 5 5060 sip.example.com.`                      |
+| `CAA`   | `0 issue "letsencrypt.org"`                       |
+| `NAPTR` | `100 10 "u" "E2U+sip" "!^.*$!sip:x@example.com!" .` |
+| `SSHFP` | `1 2 <hex>`                                       |
+| `TLSA`  | `3 1 1 <hex>`                                     |
+| `DS`    | `12345 13 2 <hex>`                                |
+| `DNSKEY`| `257 3 13 <base64>`                               |
+| `HINFO` | `"amd64" "linux"`                                 |
 
-| RPC            | Description                             |
-|----------------|-----------------------------------------|
-| `CreateRecord` | Add a DNS record to a zone              |
-| `DeleteRecord` | Remove a specific DNS record            |
-| `ListRecords`  | List all records in a zone (paginated)  |
-| `GetRecords`   | Look up records by zone, name, and type |
-
-#### Example — create a zone and add an A record
+### CLI
 
 ```bash
-# Using grpcurl
-grpcurl -plaintext -d '{
-  "name": "example.com",
-  "primary_ns": "ns1.example.com",
-  "admin_email": "admin.example.com",
-  "refresh": 3600,
-  "retry": 900,
-  "expire": 604800,
-  "minimum_ttl": 300
-}' localhost:9053 dns_manager.DNSManager/CreateZone
+export SHARDDNS_ADDR=http://localhost:9053   # default
+export SHARDDNS_TOKEN=...                    # if API_TOKEN is set
 
-grpcurl -plaintext -d '{
-  "zone": "example.com",
-  "name": "www.example.com",
-  "type": "A",
-  "ttl": 300,
-  "rdata": "93.184.216.34"
-}' localhost:9053 dns_manager.DNSManager/CreateRecord
+sharddns zone create example.com --ns ns1.example.com. --email hostmaster.example.com.
+sharddns zone list
+sharddns record add example.com www A 300 93.184.216.34
+sharddns record add example.com @ MX 300 "10 mail.example.com."
+sharddns record list example.com
+sharddns record delete example.com www A 93.184.216.34
+```
+
+### curl and grpcurl
+
+```bash
+curl -s -H 'Content-Type: application/json' -d '{"name":"example.com"}' \
+  http://localhost:9053/sharddns.v1.DNSManager/CreateZone
+
+grpcurl -plaintext -d '{"zone":"example.com","name":"www","type":"A","ttl":300,"rdata":"93.184.216.34"}' \
+  localhost:9053 sharddns.v1.DNSManager/CreateRecord
+```
+
+### Go client
+
+```bash
+go get github.com/Adatage/ShardDNS
+```
+
+```go
+import (
+    sharddnsv1 "github.com/Adatage/ShardDNS/api/sharddns/v1"
+    "github.com/Adatage/ShardDNS/api/sharddns/v1/sharddnsv1connect"
+)
+
+client := sharddnsv1connect.NewDNSManagerClient(http.DefaultClient, "http://localhost:9053")
+resp, err := client.GetZone(ctx, connect.NewRequest(&sharddnsv1.GetZoneRequest{Name: "example.com"}))
 ```
 
 ---
 
-## Database Schema
+## Database
 
-The schema lives in [`cql/database.cql`](cql/database.cql) and is applied automatically by Docker Compose.
+The schema is embedded in the binary ([`internal/store/schema.sql`](internal/store/schema.sql)) and applied under an advisory lock on startup, so several instances can start at once. Set `AUTO_MIGRATE=false` to manage it yourself.
 
-| Table          | Primary Key                    | Notes                                      |
-|----------------|--------------------------------|--------------------------------------------|
-| `zones`        | `name`                         | SOA parameters per zone                    |
-| `records`      | `(zone, name)` + `type, rdata` | LZ4 compression, Leveled Compaction        |
-| `dnssec_keys`  | `(zone)` + `flags, key_tag`    | Reserved for future DNSSEC support         |
+| Table     | Key                                   | Notes                                                    |
+|-----------|---------------------------------------|----------------------------------------------------------|
+| `zones`   | `name`                                | SOA parameters and serial                                |
+| `records` | `id`, unique `(zone, name, type, md5(rdata))` | cascades on zone delete; reversed-name index for empty-non-terminal lookups |
 
-Apply the schema manually:
+---
+
+## Performance
+
+`bench/` (built as `bin/dnsbench`) seeds a zone and drives UDP or TCP load.
 
 ```bash
-make schema
+bin/dnsbench -seed -api http://127.0.0.1:9053 -names 10000
+bin/dnsbench -server 127.0.0.1:53 -duration 15s -c 64
 ```
+
+Measured on one 12-thread machine with PostgreSQL, the load generator and `sharddnsd` all sharing the same CPUs (10,000 names, 5% NXDOMAIN, 64 concurrent clients, UDP):
+
+| Mode                   | Throughput    | p50 latency | p99 latency |
+|------------------------|---------------|-------------|-------------|
+| PostgreSQL, no cache   | ~50,000 qps   | ~1.15 ms    | ~3.3 ms     |
+| In-memory cache        | ~100,000-118,000 qps | ~0.15-0.19 ms | ~4.5 ms |
+
+Absolute numbers depend heavily on hardware and on how far the database is from the server; the ratio is what to look at.
 
 ---
 
 ## Development
 
 ```bash
-make proto        # regenerate gRPC/protobuf code from .proto files
-make build        # compile server and CLI binaries
-make test         # run all tests
-make lint         # run go vet
-make docker-up    # start ScyllaDB + ShardDNS via Docker Compose
-make docker-down  # stop all containers
-make clean        # remove build artifacts
+make proto             # regenerate api/ with buf (remote plugins, pinned versions)
+make build             # build all binaries into bin/
+make test              # unit tests (integration tests skip without a database)
+make test-integration TEST_DATABASE_URL=postgres://...   # includes the PostgreSQL tests
+make lint              # go vet
+make docker-up         # PostgreSQL + NATS + sharddnsd
 ```
 
-> **Note:** The `api/` directory (generated protobuf code) is committed to the repo. After editing any `.proto` file, run `make proto` and commit the updated `api/` files. CI will fail if the committed files are out of sync with the proto definitions.
+> The integration tests truncate the `zones` and `records` tables of the database they run against. Use a throwaway database.
+
+> The generated code in `api/` is committed. After editing the `.proto` file run `make proto` and commit the result; CI fails if it drifts.
+
+---
+
+## Upgrading from 1.x
+
+2.0 is a breaking release:
+
+- ScyllaDB is replaced by PostgreSQL (`SCYLLA_*` variables are gone, use `DATABASE_URL`). Records are not migrated automatically.
+- gRPC is replaced by ConnectRPC. The service is now `sharddns.v1.DNSManager` and the address variable is `API_ADDR` (was `GRPC_ADDR`). Existing gRPC clients keep working at the protocol level but must be regenerated for the new package.
+- Binaries are renamed: `server` is now `sharddnsd` and `cli` is now `sharddns`.
+- SOA records are no longer stored as rows. They are generated from the zone, and creating a record of type `SOA` is rejected.
+- Deleting a zone now deletes its records.
 
 ---
 

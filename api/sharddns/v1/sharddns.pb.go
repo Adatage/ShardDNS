@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        (unknown)
-// source: dns_manager.proto
+// source: sharddns/v1/sharddns.proto
 
-package dnsmgr
+package sharddnsv1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -22,6 +22,55 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+type ChangeEvent_Kind int32
+
+const (
+	ChangeEvent_KIND_UNSPECIFIED ChangeEvent_Kind = 0
+	ChangeEvent_KIND_ZONE        ChangeEvent_Kind = 1
+	ChangeEvent_KIND_RECORD      ChangeEvent_Kind = 2
+)
+
+// Enum value maps for ChangeEvent_Kind.
+var (
+	ChangeEvent_Kind_name = map[int32]string{
+		0: "KIND_UNSPECIFIED",
+		1: "KIND_ZONE",
+		2: "KIND_RECORD",
+	}
+	ChangeEvent_Kind_value = map[string]int32{
+		"KIND_UNSPECIFIED": 0,
+		"KIND_ZONE":        1,
+		"KIND_RECORD":      2,
+	}
+)
+
+func (x ChangeEvent_Kind) Enum() *ChangeEvent_Kind {
+	p := new(ChangeEvent_Kind)
+	*p = x
+	return p
+}
+
+func (x ChangeEvent_Kind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ChangeEvent_Kind) Descriptor() protoreflect.EnumDescriptor {
+	return file_sharddns_v1_sharddns_proto_enumTypes[0].Descriptor()
+}
+
+func (ChangeEvent_Kind) Type() protoreflect.EnumType {
+	return &file_sharddns_v1_sharddns_proto_enumTypes[0]
+}
+
+func (x ChangeEvent_Kind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ChangeEvent_Kind.Descriptor instead.
+func (ChangeEvent_Kind) EnumDescriptor() ([]byte, []int) {
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{14, 0}
+}
 
 type Zone struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -41,7 +90,7 @@ type Zone struct {
 
 func (x *Zone) Reset() {
 	*x = Zone{}
-	mi := &file_dns_manager_proto_msgTypes[0]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -53,7 +102,7 @@ func (x *Zone) String() string {
 func (*Zone) ProtoMessage() {}
 
 func (x *Zone) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[0]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -66,7 +115,7 @@ func (x *Zone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Zone.ProtoReflect.Descriptor instead.
 func (*Zone) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{0}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Zone) GetName() string {
@@ -153,7 +202,7 @@ type Record struct {
 
 func (x *Record) Reset() {
 	*x = Record{}
-	mi := &file_dns_manager_proto_msgTypes[1]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -165,7 +214,7 @@ func (x *Record) String() string {
 func (*Record) ProtoMessage() {}
 
 func (x *Record) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[1]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -178,7 +227,7 @@ func (x *Record) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Record.ProtoReflect.Descriptor instead.
 func (*Record) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{1}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Record) GetZone() string {
@@ -238,7 +287,7 @@ type CreateZoneRequest struct {
 
 func (x *CreateZoneRequest) Reset() {
 	*x = CreateZoneRequest{}
-	mi := &file_dns_manager_proto_msgTypes[2]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -250,7 +299,7 @@ func (x *CreateZoneRequest) String() string {
 func (*CreateZoneRequest) ProtoMessage() {}
 
 func (x *CreateZoneRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[2]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -263,7 +312,7 @@ func (x *CreateZoneRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateZoneRequest.ProtoReflect.Descriptor instead.
 func (*CreateZoneRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{2}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CreateZoneRequest) GetName() string {
@@ -324,7 +373,7 @@ type GetZoneRequest struct {
 
 func (x *GetZoneRequest) Reset() {
 	*x = GetZoneRequest{}
-	mi := &file_dns_manager_proto_msgTypes[3]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -336,7 +385,7 @@ func (x *GetZoneRequest) String() string {
 func (*GetZoneRequest) ProtoMessage() {}
 
 func (x *GetZoneRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[3]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -349,54 +398,10 @@ func (x *GetZoneRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetZoneRequest.ProtoReflect.Descriptor instead.
 func (*GetZoneRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{3}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *GetZoneRequest) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-type DeleteZoneRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *DeleteZoneRequest) Reset() {
-	*x = DeleteZoneRequest{}
-	mi := &file_dns_manager_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *DeleteZoneRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DeleteZoneRequest) ProtoMessage() {}
-
-func (x *DeleteZoneRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use DeleteZoneRequest.ProtoReflect.Descriptor instead.
-func (*DeleteZoneRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *DeleteZoneRequest) GetName() string {
 	if x != nil {
 		return x.Name
 	}
@@ -418,7 +423,7 @@ type UpdateZoneRequest struct {
 
 func (x *UpdateZoneRequest) Reset() {
 	*x = UpdateZoneRequest{}
-	mi := &file_dns_manager_proto_msgTypes[5]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -430,7 +435,7 @@ func (x *UpdateZoneRequest) String() string {
 func (*UpdateZoneRequest) ProtoMessage() {}
 
 func (x *UpdateZoneRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[5]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -443,7 +448,7 @@ func (x *UpdateZoneRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateZoneRequest.ProtoReflect.Descriptor instead.
 func (*UpdateZoneRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{5}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *UpdateZoneRequest) GetName() string {
@@ -495,6 +500,50 @@ func (x *UpdateZoneRequest) GetMinimumTtl() int32 {
 	return 0
 }
 
+type DeleteZoneRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteZoneRequest) Reset() {
+	*x = DeleteZoneRequest{}
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteZoneRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteZoneRequest) ProtoMessage() {}
+
+func (x *DeleteZoneRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteZoneRequest.ProtoReflect.Descriptor instead.
+func (*DeleteZoneRequest) Descriptor() ([]byte, []int) {
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *DeleteZoneRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 type ListZonesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PageSize      int32                  `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
@@ -505,7 +554,7 @@ type ListZonesRequest struct {
 
 func (x *ListZonesRequest) Reset() {
 	*x = ListZonesRequest{}
-	mi := &file_dns_manager_proto_msgTypes[6]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -517,7 +566,7 @@ func (x *ListZonesRequest) String() string {
 func (*ListZonesRequest) ProtoMessage() {}
 
 func (x *ListZonesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[6]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -530,7 +579,7 @@ func (x *ListZonesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListZonesRequest.ProtoReflect.Descriptor instead.
 func (*ListZonesRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{6}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListZonesRequest) GetPageSize() int32 {
@@ -557,7 +606,7 @@ type ListZonesResponse struct {
 
 func (x *ListZonesResponse) Reset() {
 	*x = ListZonesResponse{}
-	mi := &file_dns_manager_proto_msgTypes[7]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -569,7 +618,7 @@ func (x *ListZonesResponse) String() string {
 func (*ListZonesResponse) ProtoMessage() {}
 
 func (x *ListZonesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[7]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -582,7 +631,7 @@ func (x *ListZonesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListZonesResponse.ProtoReflect.Descriptor instead.
 func (*ListZonesResponse) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{7}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListZonesResponse) GetZones() []*Zone {
@@ -612,7 +661,7 @@ type CreateRecordRequest struct {
 
 func (x *CreateRecordRequest) Reset() {
 	*x = CreateRecordRequest{}
-	mi := &file_dns_manager_proto_msgTypes[8]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -624,7 +673,7 @@ func (x *CreateRecordRequest) String() string {
 func (*CreateRecordRequest) ProtoMessage() {}
 
 func (x *CreateRecordRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[8]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -637,7 +686,7 @@ func (x *CreateRecordRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRecordRequest.ProtoReflect.Descriptor instead.
 func (*CreateRecordRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{8}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CreateRecordRequest) GetZone() string {
@@ -687,7 +736,7 @@ type DeleteRecordRequest struct {
 
 func (x *DeleteRecordRequest) Reset() {
 	*x = DeleteRecordRequest{}
-	mi := &file_dns_manager_proto_msgTypes[9]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -699,7 +748,7 @@ func (x *DeleteRecordRequest) String() string {
 func (*DeleteRecordRequest) ProtoMessage() {}
 
 func (x *DeleteRecordRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[9]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -712,7 +761,7 @@ func (x *DeleteRecordRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRecordRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRecordRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{9}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *DeleteRecordRequest) GetZone() string {
@@ -747,13 +796,14 @@ type ListRecordsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Zone          string                 `protobuf:"bytes,1,opt,name=zone,proto3" json:"zone,omitempty"`
 	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string                 `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListRecordsRequest) Reset() {
 	*x = ListRecordsRequest{}
-	mi := &file_dns_manager_proto_msgTypes[10]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -765,7 +815,7 @@ func (x *ListRecordsRequest) String() string {
 func (*ListRecordsRequest) ProtoMessage() {}
 
 func (x *ListRecordsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[10]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -778,7 +828,7 @@ func (x *ListRecordsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRecordsRequest.ProtoReflect.Descriptor instead.
 func (*ListRecordsRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{10}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListRecordsRequest) GetZone() string {
@@ -795,16 +845,24 @@ func (x *ListRecordsRequest) GetPageSize() int32 {
 	return 0
 }
 
+func (x *ListRecordsRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
 type ListRecordsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Records       []*Record              `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListRecordsResponse) Reset() {
 	*x = ListRecordsResponse{}
-	mi := &file_dns_manager_proto_msgTypes[11]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -816,7 +874,7 @@ func (x *ListRecordsResponse) String() string {
 func (*ListRecordsResponse) ProtoMessage() {}
 
 func (x *ListRecordsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[11]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -829,7 +887,7 @@ func (x *ListRecordsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRecordsResponse.ProtoReflect.Descriptor instead.
 func (*ListRecordsResponse) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{11}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListRecordsResponse) GetRecords() []*Record {
@@ -837,6 +895,13 @@ func (x *ListRecordsResponse) GetRecords() []*Record {
 		return x.Records
 	}
 	return nil
+}
+
+func (x *ListRecordsResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
 }
 
 type GetRecordsRequest struct {
@@ -850,7 +915,7 @@ type GetRecordsRequest struct {
 
 func (x *GetRecordsRequest) Reset() {
 	*x = GetRecordsRequest{}
-	mi := &file_dns_manager_proto_msgTypes[12]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -862,7 +927,7 @@ func (x *GetRecordsRequest) String() string {
 func (*GetRecordsRequest) ProtoMessage() {}
 
 func (x *GetRecordsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_manager_proto_msgTypes[12]
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -875,7 +940,7 @@ func (x *GetRecordsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRecordsRequest.ProtoReflect.Descriptor instead.
 func (*GetRecordsRequest) Descriptor() ([]byte, []int) {
-	return file_dns_manager_proto_rawDescGZIP(), []int{12}
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetRecordsRequest) GetZone() string {
@@ -899,11 +964,123 @@ func (x *GetRecordsRequest) GetType() string {
 	return ""
 }
 
-var File_dns_manager_proto protoreflect.FileDescriptor
+type GetRecordsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Records       []*Record              `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
 
-const file_dns_manager_proto_rawDesc = "" +
+func (x *GetRecordsResponse) Reset() {
+	*x = GetRecordsResponse{}
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRecordsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRecordsResponse) ProtoMessage() {}
+
+func (x *GetRecordsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRecordsResponse.ProtoReflect.Descriptor instead.
+func (*GetRecordsResponse) Descriptor() ([]byte, []int) {
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *GetRecordsResponse) GetRecords() []*Record {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+type ChangeEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Origin        string                 `protobuf:"bytes,1,opt,name=origin,proto3" json:"origin,omitempty"`
+	Kind          ChangeEvent_Kind       `protobuf:"varint,2,opt,name=kind,proto3,enum=sharddns.v1.ChangeEvent_Kind" json:"kind,omitempty"`
+	Zone          string                 `protobuf:"bytes,3,opt,name=zone,proto3" json:"zone,omitempty"`
+	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChangeEvent) Reset() {
+	*x = ChangeEvent{}
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChangeEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangeEvent) ProtoMessage() {}
+
+func (x *ChangeEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_sharddns_v1_sharddns_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangeEvent.ProtoReflect.Descriptor instead.
+func (*ChangeEvent) Descriptor() ([]byte, []int) {
+	return file_sharddns_v1_sharddns_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ChangeEvent) GetOrigin() string {
+	if x != nil {
+		return x.Origin
+	}
+	return ""
+}
+
+func (x *ChangeEvent) GetKind() ChangeEvent_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return ChangeEvent_KIND_UNSPECIFIED
+}
+
+func (x *ChangeEvent) GetZone() string {
+	if x != nil {
+		return x.Zone
+	}
+	return ""
+}
+
+func (x *ChangeEvent) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+var File_sharddns_v1_sharddns_proto protoreflect.FileDescriptor
+
+const file_sharddns_v1_sharddns_proto_rawDesc = "" +
 	"\n" +
-	"\x11dns_manager.proto\x12\vdns_manager\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd1\x02\n" +
+	"\x1asharddns/v1/sharddns.proto\x12\vsharddns.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd1\x02\n" +
 	"\x04Zone\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
@@ -941,8 +1118,6 @@ const file_dns_manager_proto_rawDesc = "" +
 	"\vminimum_ttl\x18\a \x01(\x05R\n" +
 	"minimumTtl\"$\n" +
 	"\x0eGetZoneRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"'\n" +
-	"\x11DeleteZoneRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"\xd0\x01\n" +
 	"\x11UpdateZoneRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
@@ -954,13 +1129,15 @@ const file_dns_manager_proto_rawDesc = "" +
 	"\x05retry\x18\x05 \x01(\x05R\x05retry\x12\x16\n" +
 	"\x06expire\x18\x06 \x01(\x05R\x06expire\x12\x1f\n" +
 	"\vminimum_ttl\x18\a \x01(\x05R\n" +
-	"minimumTtl\"N\n" +
+	"minimumTtl\"'\n" +
+	"\x11DeleteZoneRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"N\n" +
 	"\x10ListZonesRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x02 \x01(\tR\tpageToken\"d\n" +
 	"\x11ListZonesResponse\x12'\n" +
-	"\x05zones\x18\x01 \x03(\v2\x11.dns_manager.ZoneR\x05zones\x12&\n" +
+	"\x05zones\x18\x01 \x03(\v2\x11.sharddns.v1.ZoneR\x05zones\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"y\n" +
 	"\x13CreateRecordRequest\x12\x12\n" +
 	"\x04zone\x18\x01 \x01(\tR\x04zone\x12\x12\n" +
@@ -972,113 +1149,134 @@ const file_dns_manager_proto_rawDesc = "" +
 	"\x04zone\x18\x01 \x01(\tR\x04zone\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12\x14\n" +
-	"\x05rdata\x18\x04 \x01(\tR\x05rdata\"E\n" +
+	"\x05rdata\x18\x04 \x01(\tR\x05rdata\"d\n" +
 	"\x12ListRecordsRequest\x12\x12\n" +
 	"\x04zone\x18\x01 \x01(\tR\x04zone\x12\x1b\n" +
-	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\"D\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x03 \x01(\tR\tpageToken\"l\n" +
 	"\x13ListRecordsResponse\x12-\n" +
-	"\arecords\x18\x01 \x03(\v2\x13.dns_manager.RecordR\arecords\"O\n" +
+	"\arecords\x18\x01 \x03(\v2\x13.sharddns.v1.RecordR\arecords\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"O\n" +
 	"\x11GetRecordsRequest\x12\x12\n" +
 	"\x04zone\x18\x01 \x01(\tR\x04zone\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
-	"\x04type\x18\x03 \x01(\tR\x04type2\x8e\x05\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\"C\n" +
+	"\x12GetRecordsResponse\x12-\n" +
+	"\arecords\x18\x01 \x03(\v2\x13.sharddns.v1.RecordR\arecords\"\xbe\x01\n" +
+	"\vChangeEvent\x12\x16\n" +
+	"\x06origin\x18\x01 \x01(\tR\x06origin\x121\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x1d.sharddns.v1.ChangeEvent.KindR\x04kind\x12\x12\n" +
+	"\x04zone\x18\x03 \x01(\tR\x04zone\x12\x12\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name\"<\n" +
+	"\x04Kind\x12\x14\n" +
+	"\x10KIND_UNSPECIFIED\x10\x00\x12\r\n" +
+	"\tKIND_ZONE\x10\x01\x12\x0f\n" +
+	"\vKIND_RECORD\x10\x022\x8d\x05\n" +
 	"\n" +
 	"DNSManager\x12?\n" +
 	"\n" +
-	"CreateZone\x12\x1e.dns_manager.CreateZoneRequest\x1a\x11.dns_manager.Zone\x129\n" +
-	"\aGetZone\x12\x1b.dns_manager.GetZoneRequest\x1a\x11.dns_manager.Zone\x12?\n" +
+	"CreateZone\x12\x1e.sharddns.v1.CreateZoneRequest\x1a\x11.sharddns.v1.Zone\x129\n" +
+	"\aGetZone\x12\x1b.sharddns.v1.GetZoneRequest\x1a\x11.sharddns.v1.Zone\x12?\n" +
 	"\n" +
-	"UpdateZone\x12\x1e.dns_manager.UpdateZoneRequest\x1a\x11.dns_manager.Zone\x12D\n" +
+	"UpdateZone\x12\x1e.sharddns.v1.UpdateZoneRequest\x1a\x11.sharddns.v1.Zone\x12D\n" +
 	"\n" +
-	"DeleteZone\x12\x1e.dns_manager.DeleteZoneRequest\x1a\x16.google.protobuf.Empty\x12J\n" +
-	"\tListZones\x12\x1d.dns_manager.ListZonesRequest\x1a\x1e.dns_manager.ListZonesResponse\x12E\n" +
-	"\fCreateRecord\x12 .dns_manager.CreateRecordRequest\x1a\x13.dns_manager.Record\x12H\n" +
-	"\fDeleteRecord\x12 .dns_manager.DeleteRecordRequest\x1a\x16.google.protobuf.Empty\x12P\n" +
-	"\vListRecords\x12\x1f.dns_manager.ListRecordsRequest\x1a .dns_manager.ListRecordsResponse\x12N\n" +
+	"DeleteZone\x12\x1e.sharddns.v1.DeleteZoneRequest\x1a\x16.google.protobuf.Empty\x12J\n" +
+	"\tListZones\x12\x1d.sharddns.v1.ListZonesRequest\x1a\x1e.sharddns.v1.ListZonesResponse\x12E\n" +
+	"\fCreateRecord\x12 .sharddns.v1.CreateRecordRequest\x1a\x13.sharddns.v1.Record\x12H\n" +
+	"\fDeleteRecord\x12 .sharddns.v1.DeleteRecordRequest\x1a\x16.google.protobuf.Empty\x12P\n" +
+	"\vListRecords\x12\x1f.sharddns.v1.ListRecordsRequest\x1a .sharddns.v1.ListRecordsResponse\x12M\n" +
 	"\n" +
-	"GetRecords\x12\x1e.dns_manager.GetRecordsRequest\x1a .dns_manager.ListRecordsResponseB(Z&github.com/Adatage/ShardDNS/api;dnsmgrb\x06proto3"
+	"GetRecords\x12\x1e.sharddns.v1.GetRecordsRequest\x1a\x1f.sharddns.v1.GetRecordsResponseB8Z6github.com/Adatage/ShardDNS/api/sharddns/v1;sharddnsv1b\x06proto3"
 
 var (
-	file_dns_manager_proto_rawDescOnce sync.Once
-	file_dns_manager_proto_rawDescData []byte
+	file_sharddns_v1_sharddns_proto_rawDescOnce sync.Once
+	file_sharddns_v1_sharddns_proto_rawDescData []byte
 )
 
-func file_dns_manager_proto_rawDescGZIP() []byte {
-	file_dns_manager_proto_rawDescOnce.Do(func() {
-		file_dns_manager_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_dns_manager_proto_rawDesc), len(file_dns_manager_proto_rawDesc)))
+func file_sharddns_v1_sharddns_proto_rawDescGZIP() []byte {
+	file_sharddns_v1_sharddns_proto_rawDescOnce.Do(func() {
+		file_sharddns_v1_sharddns_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_sharddns_v1_sharddns_proto_rawDesc), len(file_sharddns_v1_sharddns_proto_rawDesc)))
 	})
-	return file_dns_manager_proto_rawDescData
+	return file_sharddns_v1_sharddns_proto_rawDescData
 }
 
-var file_dns_manager_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
-var file_dns_manager_proto_goTypes = []any{
-	(*Zone)(nil),                  // 0: dns_manager.Zone
-	(*Record)(nil),                // 1: dns_manager.Record
-	(*CreateZoneRequest)(nil),     // 2: dns_manager.CreateZoneRequest
-	(*GetZoneRequest)(nil),        // 3: dns_manager.GetZoneRequest
-	(*DeleteZoneRequest)(nil),     // 4: dns_manager.DeleteZoneRequest
-	(*UpdateZoneRequest)(nil),     // 5: dns_manager.UpdateZoneRequest
-	(*ListZonesRequest)(nil),      // 6: dns_manager.ListZonesRequest
-	(*ListZonesResponse)(nil),     // 7: dns_manager.ListZonesResponse
-	(*CreateRecordRequest)(nil),   // 8: dns_manager.CreateRecordRequest
-	(*DeleteRecordRequest)(nil),   // 9: dns_manager.DeleteRecordRequest
-	(*ListRecordsRequest)(nil),    // 10: dns_manager.ListRecordsRequest
-	(*ListRecordsResponse)(nil),   // 11: dns_manager.ListRecordsResponse
-	(*GetRecordsRequest)(nil),     // 12: dns_manager.GetRecordsRequest
-	(*timestamppb.Timestamp)(nil), // 13: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),         // 14: google.protobuf.Empty
+var file_sharddns_v1_sharddns_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_sharddns_v1_sharddns_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_sharddns_v1_sharddns_proto_goTypes = []any{
+	(ChangeEvent_Kind)(0),         // 0: sharddns.v1.ChangeEvent.Kind
+	(*Zone)(nil),                  // 1: sharddns.v1.Zone
+	(*Record)(nil),                // 2: sharddns.v1.Record
+	(*CreateZoneRequest)(nil),     // 3: sharddns.v1.CreateZoneRequest
+	(*GetZoneRequest)(nil),        // 4: sharddns.v1.GetZoneRequest
+	(*UpdateZoneRequest)(nil),     // 5: sharddns.v1.UpdateZoneRequest
+	(*DeleteZoneRequest)(nil),     // 6: sharddns.v1.DeleteZoneRequest
+	(*ListZonesRequest)(nil),      // 7: sharddns.v1.ListZonesRequest
+	(*ListZonesResponse)(nil),     // 8: sharddns.v1.ListZonesResponse
+	(*CreateRecordRequest)(nil),   // 9: sharddns.v1.CreateRecordRequest
+	(*DeleteRecordRequest)(nil),   // 10: sharddns.v1.DeleteRecordRequest
+	(*ListRecordsRequest)(nil),    // 11: sharddns.v1.ListRecordsRequest
+	(*ListRecordsResponse)(nil),   // 12: sharddns.v1.ListRecordsResponse
+	(*GetRecordsRequest)(nil),     // 13: sharddns.v1.GetRecordsRequest
+	(*GetRecordsResponse)(nil),    // 14: sharddns.v1.GetRecordsResponse
+	(*ChangeEvent)(nil),           // 15: sharddns.v1.ChangeEvent
+	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),         // 17: google.protobuf.Empty
 }
-var file_dns_manager_proto_depIdxs = []int32{
-	13, // 0: dns_manager.Zone.created_at:type_name -> google.protobuf.Timestamp
-	13, // 1: dns_manager.Zone.updated_at:type_name -> google.protobuf.Timestamp
-	13, // 2: dns_manager.Record.created_at:type_name -> google.protobuf.Timestamp
-	0,  // 3: dns_manager.ListZonesResponse.zones:type_name -> dns_manager.Zone
-	1,  // 4: dns_manager.ListRecordsResponse.records:type_name -> dns_manager.Record
-	2,  // 5: dns_manager.DNSManager.CreateZone:input_type -> dns_manager.CreateZoneRequest
-	3,  // 6: dns_manager.DNSManager.GetZone:input_type -> dns_manager.GetZoneRequest
-	5,  // 7: dns_manager.DNSManager.UpdateZone:input_type -> dns_manager.UpdateZoneRequest
-	4,  // 8: dns_manager.DNSManager.DeleteZone:input_type -> dns_manager.DeleteZoneRequest
-	6,  // 9: dns_manager.DNSManager.ListZones:input_type -> dns_manager.ListZonesRequest
-	8,  // 10: dns_manager.DNSManager.CreateRecord:input_type -> dns_manager.CreateRecordRequest
-	9,  // 11: dns_manager.DNSManager.DeleteRecord:input_type -> dns_manager.DeleteRecordRequest
-	10, // 12: dns_manager.DNSManager.ListRecords:input_type -> dns_manager.ListRecordsRequest
-	12, // 13: dns_manager.DNSManager.GetRecords:input_type -> dns_manager.GetRecordsRequest
-	0,  // 14: dns_manager.DNSManager.CreateZone:output_type -> dns_manager.Zone
-	0,  // 15: dns_manager.DNSManager.GetZone:output_type -> dns_manager.Zone
-	0,  // 16: dns_manager.DNSManager.UpdateZone:output_type -> dns_manager.Zone
-	14, // 17: dns_manager.DNSManager.DeleteZone:output_type -> google.protobuf.Empty
-	7,  // 18: dns_manager.DNSManager.ListZones:output_type -> dns_manager.ListZonesResponse
-	1,  // 19: dns_manager.DNSManager.CreateRecord:output_type -> dns_manager.Record
-	14, // 20: dns_manager.DNSManager.DeleteRecord:output_type -> google.protobuf.Empty
-	11, // 21: dns_manager.DNSManager.ListRecords:output_type -> dns_manager.ListRecordsResponse
-	11, // 22: dns_manager.DNSManager.GetRecords:output_type -> dns_manager.ListRecordsResponse
-	14, // [14:23] is the sub-list for method output_type
-	5,  // [5:14] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+var file_sharddns_v1_sharddns_proto_depIdxs = []int32{
+	16, // 0: sharddns.v1.Zone.created_at:type_name -> google.protobuf.Timestamp
+	16, // 1: sharddns.v1.Zone.updated_at:type_name -> google.protobuf.Timestamp
+	16, // 2: sharddns.v1.Record.created_at:type_name -> google.protobuf.Timestamp
+	1,  // 3: sharddns.v1.ListZonesResponse.zones:type_name -> sharddns.v1.Zone
+	2,  // 4: sharddns.v1.ListRecordsResponse.records:type_name -> sharddns.v1.Record
+	2,  // 5: sharddns.v1.GetRecordsResponse.records:type_name -> sharddns.v1.Record
+	0,  // 6: sharddns.v1.ChangeEvent.kind:type_name -> sharddns.v1.ChangeEvent.Kind
+	3,  // 7: sharddns.v1.DNSManager.CreateZone:input_type -> sharddns.v1.CreateZoneRequest
+	4,  // 8: sharddns.v1.DNSManager.GetZone:input_type -> sharddns.v1.GetZoneRequest
+	5,  // 9: sharddns.v1.DNSManager.UpdateZone:input_type -> sharddns.v1.UpdateZoneRequest
+	6,  // 10: sharddns.v1.DNSManager.DeleteZone:input_type -> sharddns.v1.DeleteZoneRequest
+	7,  // 11: sharddns.v1.DNSManager.ListZones:input_type -> sharddns.v1.ListZonesRequest
+	9,  // 12: sharddns.v1.DNSManager.CreateRecord:input_type -> sharddns.v1.CreateRecordRequest
+	10, // 13: sharddns.v1.DNSManager.DeleteRecord:input_type -> sharddns.v1.DeleteRecordRequest
+	11, // 14: sharddns.v1.DNSManager.ListRecords:input_type -> sharddns.v1.ListRecordsRequest
+	13, // 15: sharddns.v1.DNSManager.GetRecords:input_type -> sharddns.v1.GetRecordsRequest
+	1,  // 16: sharddns.v1.DNSManager.CreateZone:output_type -> sharddns.v1.Zone
+	1,  // 17: sharddns.v1.DNSManager.GetZone:output_type -> sharddns.v1.Zone
+	1,  // 18: sharddns.v1.DNSManager.UpdateZone:output_type -> sharddns.v1.Zone
+	17, // 19: sharddns.v1.DNSManager.DeleteZone:output_type -> google.protobuf.Empty
+	8,  // 20: sharddns.v1.DNSManager.ListZones:output_type -> sharddns.v1.ListZonesResponse
+	2,  // 21: sharddns.v1.DNSManager.CreateRecord:output_type -> sharddns.v1.Record
+	17, // 22: sharddns.v1.DNSManager.DeleteRecord:output_type -> google.protobuf.Empty
+	12, // 23: sharddns.v1.DNSManager.ListRecords:output_type -> sharddns.v1.ListRecordsResponse
+	14, // 24: sharddns.v1.DNSManager.GetRecords:output_type -> sharddns.v1.GetRecordsResponse
+	16, // [16:25] is the sub-list for method output_type
+	7,  // [7:16] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
-func init() { file_dns_manager_proto_init() }
-func file_dns_manager_proto_init() {
-	if File_dns_manager_proto != nil {
+func init() { file_sharddns_v1_sharddns_proto_init() }
+func file_sharddns_v1_sharddns_proto_init() {
+	if File_sharddns_v1_sharddns_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dns_manager_proto_rawDesc), len(file_dns_manager_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   13,
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sharddns_v1_sharddns_proto_rawDesc), len(file_sharddns_v1_sharddns_proto_rawDesc)),
+			NumEnums:      1,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_dns_manager_proto_goTypes,
-		DependencyIndexes: file_dns_manager_proto_depIdxs,
-		MessageInfos:      file_dns_manager_proto_msgTypes,
+		GoTypes:           file_sharddns_v1_sharddns_proto_goTypes,
+		DependencyIndexes: file_sharddns_v1_sharddns_proto_depIdxs,
+		EnumInfos:         file_sharddns_v1_sharddns_proto_enumTypes,
+		MessageInfos:      file_sharddns_v1_sharddns_proto_msgTypes,
 	}.Build()
-	File_dns_manager_proto = out.File
-	file_dns_manager_proto_goTypes = nil
-	file_dns_manager_proto_depIdxs = nil
+	File_sharddns_v1_sharddns_proto = out.File
+	file_sharddns_v1_sharddns_proto_goTypes = nil
+	file_sharddns_v1_sharddns_proto_depIdxs = nil
 }

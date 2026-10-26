@@ -4,206 +4,186 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-	"time"
+	"strconv"
 
-	"github.com/gocql/gocql"
+	"github.com/jackc/pgx/v5"
 )
 
-type Record struct {
-	Zone      string
-	Name      string
-	Type      string
-	TTL       int32
-	RData     string
-	CreatedAt time.Time
+const recordColumns = `id, zone, name, type, ttl, rdata, created_at`
+
+func (s *Store) scanRecord(row pgx.Row) (*Record, error) {
+	r := &Record{}
+	if err := row.Scan(&r.ID, &r.Zone, &r.Name, &r.Type, &r.TTL, &r.RData, &r.CreatedAt); err != nil {
+		return nil, err
+	}
+	if s.encode != nil {
+		r.Wire, r.WireErr = s.encode(r.Type, r.RData)
+	}
+	return r, nil
 }
 
-func normalizeName(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	name = strings.TrimSuffix(name, ".")
-	if name == "" {
-		return "@"
+func (s *Store) collectRecords(rows pgx.Rows) ([]*Record, error) {
+	defer rows.Close()
+	var out []*Record
+	for rows.Next() {
+		r, err := s.scanRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
 	}
-	return name
+	return out, rows.Err()
 }
 
-func normalizeType(t string) string {
-	return strings.ToUpper(strings.TrimSpace(t))
-}
+func (s *Store) CreateRecord(ctx context.Context, r *Record) (*Record, error) {
+	zone := NormalizeZone(r.Zone)
+	name := NormalizeName(zone, r.Name)
+	rtype := NormalizeType(r.Type)
 
-func (s *Store) CreateRecord(ctx context.Context, r *Record) error {
-	r.Zone = normalizeZone(r.Zone)
-	r.Name = normalizeName(r.Name)
-	r.Type = normalizeType(r.Type)
-	if r.Zone == "" || r.Name == "" || r.Type == "" {
-		return fmt.Errorf("store: zone, name and type required")
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `UPDATE zones SET `+bumpSerial+` WHERE name = $1`, zone)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
 	}
 
-	if r.Name == r.Zone {
-		r.Name = "@"
+	if rtype == "CNAME" {
+		if name == zone {
+			return nil, fmt.Errorf("%w: CNAME not allowed at zone apex", ErrConflict)
+		}
+		var other bool
+		err = tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM records WHERE zone = $1 AND name = $2 AND (type <> 'CNAME' OR md5(rdata) <> md5($3)))`,
+			zone, name, r.RData).Scan(&other)
+		if err != nil {
+			return nil, err
+		}
+		if other {
+			return nil, fmt.Errorf("%w: CNAME cannot coexist with other records at %s", ErrConflict, name)
+		}
+	} else {
+		var cname bool
+		err = tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM records WHERE zone = $1 AND name = $2 AND type = 'CNAME')`,
+			zone, name).Scan(&cname)
+		if err != nil {
+			return nil, err
+		}
+		if cname {
+			return nil, fmt.Errorf("%w: %s has a CNAME record", ErrConflict, name)
+		}
 	}
-	if r.CreatedAt.IsZero() {
-		r.CreatedAt = time.Now().UTC()
+
+	out, err := s.scanRecord(tx.QueryRow(ctx,
+		`INSERT INTO records (zone, name, name_rev, type, ttl, rdata)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (zone, name, type, md5(rdata)) DO UPDATE SET ttl = EXCLUDED.ttl
+		 RETURNING `+recordColumns,
+		zone, name, reverseName(name), rtype, r.TTL, r.RData))
+	if err != nil {
+		return nil, err
 	}
-	return s.Session.Query(s.stmts.insertRecord,
-		r.Zone, r.Name, r.Type, r.TTL, r.RData, r.CreatedAt,
-	).WithContext(ctx).Consistency(gocql.LocalQuorum).Exec()
+	if _, err := tx.Exec(ctx,
+		`UPDATE records SET ttl = $4 WHERE zone = $1 AND name = $2 AND type = $3 AND ttl <> $4`,
+		zone, name, rtype, r.TTL); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Store) DeleteRecord(ctx context.Context, zone, name, rtype, rdata string) error {
-	zone = normalizeZone(zone)
-	name = normalizeName(name)
-	rtype = normalizeType(rtype)
-	return s.Session.Query(s.stmts.deleteRecord, zone, name, rtype, rdata).
-		WithContext(ctx).
-		Consistency(gocql.LocalQuorum).
-		Exec()
+	zone = NormalizeZone(zone)
+	name = NormalizeName(zone, name)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx,
+		`DELETE FROM records WHERE zone = $1 AND name = $2 AND type = $3 AND md5(rdata) = md5($4)`,
+		zone, name, NormalizeType(rtype), rdata)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `UPDATE zones SET `+bumpSerial+` WHERE name = $1`, zone); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-func (s *Store) ListRecords(ctx context.Context, zone string, pageSize int) ([]*Record, error) {
-	zone = normalizeZone(zone)
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-	iter := s.Session.Query(s.stmts.listRecordsByZone, zone).
-		WithContext(ctx).
-		Consistency(gocql.LocalOne).
-		PageSize(pageSize).
-		Iter()
-	defer iter.Close()
-
-	records := make([]*Record, 0, pageSize)
-	for {
-		r := &Record{}
-		if !iter.Scan(&r.Zone, &r.Name, &r.Type, &r.TTL, &r.RData, &r.CreatedAt) {
-			break
+func (s *Store) ListRecords(ctx context.Context, zone string, limit int, after string) ([]*Record, string, error) {
+	var afterID int64
+	if after != "" {
+		id, err := strconv.ParseInt(after, 10, 64)
+		if err != nil || id < 0 {
+			return nil, "", fmt.Errorf("store: invalid page token")
 		}
-		records = append(records, r)
+		afterID = id
 	}
-	if err := iter.Close(); err != nil {
-		return nil, err
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+recordColumns+` FROM records WHERE zone = $1 AND id > $2 ORDER BY id LIMIT $3`,
+		NormalizeZone(zone), afterID, limit+1)
+	if err != nil {
+		return nil, "", err
 	}
-	return records, nil
+	records, err := s.collectRecords(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(records) > limit {
+		records = records[:limit]
+		next = strconv.FormatInt(records[limit-1].ID, 10)
+	}
+	return records, next, nil
 }
 
 func (s *Store) GetRecords(ctx context.Context, zone, name, rtype string) ([]*Record, error) {
-	zone = normalizeZone(zone)
-	name = normalizeName(name)
-	rtype = normalizeType(rtype)
-	iter := s.Session.Query(s.stmts.getRecords, zone, name, rtype).
-		WithContext(ctx).
-		Consistency(gocql.LocalOne).
-		Iter()
-	defer iter.Close()
-
-	records := make([]*Record, 0, 4)
-	for {
-		r := &Record{}
-		if !iter.Scan(&r.Zone, &r.Name, &r.Type, &r.TTL, &r.RData, &r.CreatedAt) {
-			break
-		}
-		records = append(records, r)
-	}
-	if err := iter.Close(); err != nil {
-		return nil, err
-	}
-	return records, nil
-}
-
-func (s *Store) GetSOA(ctx context.Context, zone string) (*Record, error) {
-	zone = normalizeZone(zone)
-	iter := s.Session.Query(s.stmts.getSOA, zone, "@").
-		WithContext(ctx).
-		Consistency(gocql.LocalOne).
-		Iter()
-	defer iter.Close()
-
-	r := &Record{}
-	if iter.Scan(&r.Zone, &r.Name, &r.Type, &r.TTL, &r.RData, &r.CreatedAt) {
-		if err := iter.Close(); err != nil {
-			return nil, err
-		}
-		return r, nil
-	}
-	if err := iter.Close(); err != nil {
-		return nil, err
-	}
-	return nil, ErrNotFound
-}
-
-func (s *Store) LookupRecords(ctx context.Context, zone, name, rtype string) ([]*Record, error) {
-	zone = normalizeZone(zone)
-	name = normalizeName(name)
-	rtype = normalizeType(rtype)
-
-	if name == zone {
-		name = "@"
-	}
-
-	iter := s.Session.Query(s.stmts.lookupRecords, zone, name, rtype).
-		WithContext(ctx).
-		Consistency(gocql.LocalOne).
-		Iter()
-	defer iter.Close()
-
-	records := make([]*Record, 0, 4)
-	for {
-		r := &Record{}
-		if !iter.Scan(&r.Zone, &r.Name, &r.Type, &r.TTL, &r.RData, &r.CreatedAt) {
-			break
-		}
-		records = append(records, r)
-	}
-	if err := iter.Close(); err != nil {
-		return nil, err
-	}
-	return records, nil
-}
-
-func (s *Store) NameExists(ctx context.Context, zone, name string) (bool, error) {
-	zone = normalizeZone(zone)
-	name = normalizeName(name)
-	if name == zone {
-		name = "@"
-	}
-	var typ string
-	err := s.Session.Query(
-		`SELECT type FROM records WHERE zone = ? AND name = ? LIMIT 1`,
-		zone, name,
-	).WithContext(ctx).Consistency(gocql.LocalOne).Scan(&typ)
+	zone = NormalizeZone(zone)
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+recordColumns+` FROM records WHERE zone = $1 AND name = $2 AND type = $3 ORDER BY id`,
+		zone, NormalizeName(zone, name), NormalizeType(rtype))
 	if err != nil {
-		if errors.Is(err, gocql.ErrNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
-}
-
-func (s *Store) LookupAllTypes(ctx context.Context, zone, name string) ([]*Record, error) {
-	zone = normalizeZone(zone)
-	name = normalizeName(name)
-	if name == zone {
-		name = "@"
-	}
-
-	iter := s.Session.Query(
-		`SELECT zone, name, type, ttl, rdata, created_at FROM records WHERE zone = ? AND name = ?`,
-		zone, name,
-	).WithContext(ctx).Consistency(gocql.LocalOne).Iter()
-	defer iter.Close()
-
-	records := make([]*Record, 0, 8)
-	for {
-		r := &Record{}
-		if !iter.Scan(&r.Zone, &r.Name, &r.Type, &r.TTL, &r.RData, &r.CreatedAt) {
-			break
-		}
-		records = append(records, r)
-	}
-	if err := iter.Close(); err != nil {
 		return nil, err
 	}
-	return records, nil
+	return s.collectRecords(rows)
+}
+
+func (s *Store) LookupName(ctx context.Context, zone, name string) (*NameSet, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+recordColumns+` FROM records WHERE zone = $1 AND name = $2`, zone, name)
+	if err != nil {
+		return nil, err
+	}
+	records, err := s.collectRecords(rows)
+	if err != nil {
+		return nil, err
+	}
+	set := &NameSet{Records: records}
+	if len(records) > 0 {
+		return set, nil
+	}
+	prefix := reverseName(name) + "."
+	err = s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM records WHERE zone = $1 AND name_rev >= $2 AND name_rev < $3)`,
+		zone, prefix, prefix[:len(prefix)-1]+"/").Scan(&set.HasChildren)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	return set, nil
 }

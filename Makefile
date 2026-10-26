@@ -1,35 +1,40 @@
-.PHONY: proto build run docker-up docker-down schema test lint clean install
+.PHONY: proto build build-all run docker-up docker-down test test-integration lint bench clean
 
-BINARY_SERVER = bin/sharddns
-BINARY_CLI    = bin/sharddns-cli
+VERSION ?= dev
+LDFLAGS  = -s -w -X main.version=$(VERSION)
 
 proto:
 	buf generate
 
 build:
 	@mkdir -p bin
-	go build -ldflags="-s -w" -o $(BINARY_SERVER) ./cmd/server
-	go build -ldflags="-s -w" -o $(BINARY_CLI) ./cmd/cli
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/sharddnsd ./cmd/sharddnsd
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/sharddns ./cmd/sharddns
+	go build -trimpath -o bin/dnsbench ./bench
 
 build-all: proto build
 
 run: build
-	./$(BINARY_SERVER)
+	./bin/sharddnsd
 
 docker-up:
-	docker compose up -d
+	docker compose up -d --build
 
 docker-down:
 	docker compose down
 
-schema:
-	docker compose exec -T scylla cqlsh -f /cql/database.cql
-
 test:
 	go test ./...
+
+test-integration:
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" go test -race -count=1 -p 1 ./...
 
 lint:
 	go vet ./...
 
+bench: build
+	./bin/dnsbench -seed -names 10000
+	./bin/dnsbench -duration 15s -c 64
+
 clean:
-	rm -rf bin api
+	rm -rf bin

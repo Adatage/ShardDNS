@@ -1,38 +1,64 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
-	DNSAddr string
-	GRPCAddr string
-	ScyllaHosts []string
-	ScyllaKeyspace string
-	ScyllaUsername string
-	ScyllaPassword string
-	Workers int
-	LogLevel string
+	DNSAddr         string
+	APIAddr         string
+	APIToken        string
+	DatabaseURL     string
+	DBMaxConns      int
+	AutoMigrate     bool
+	Workers         int
+	LogLevel        string
+	CacheEnabled    bool
+	CacheTTL        time.Duration
+	CacheMaxEntries int
+	NATSURL         string
+	NATSSubject     string
 }
 
-func Load() *Config {
+func Load() (*Config, error) {
 	cfg := &Config{
-		DNSAddr:        getenv("DNS_ADDR", ":53"),
-		GRPCAddr:       getenv("GRPC_ADDR", ":9053"),
-		ScyllaHosts:    splitCSV(getenv("SCYLLA_HOSTS", "127.0.0.1")),
-		ScyllaKeyspace: getenv("SCYLLA_KEYSPACE", "sharddns"),
-		ScyllaUsername: os.Getenv("SCYLLA_USERNAME"),
-		ScyllaPassword: os.Getenv("SCYLLA_PASSWORD"),
-		Workers:        getenvInt("WORKERS", 0),
-		LogLevel:       getenv("LOG_LEVEL", "info"),
+		DNSAddr:         getenv("DNS_ADDR", ":53"),
+		APIAddr:         getenv("API_ADDR", ":9053"),
+		APIToken:        os.Getenv("API_TOKEN"),
+		DatabaseURL:     os.Getenv("DATABASE_URL"),
+		DBMaxConns:      getenvInt("DB_MAX_CONNS", 0),
+		AutoMigrate:     getenvBool("AUTO_MIGRATE", true),
+		Workers:         getenvInt("WORKERS", 0),
+		LogLevel:        getenv("LOG_LEVEL", "info"),
+		CacheEnabled:    getenvBool("CACHE_ENABLED", false),
+		CacheMaxEntries: getenvInt("CACHE_MAX_ENTRIES", 100000),
+		NATSURL:         os.Getenv("NATS_URL"),
+		NATSSubject:     getenv("NATS_SUBJECT", "sharddns.changes"),
+	}
+	ttl, err := time.ParseDuration(getenv("CACHE_TTL", "60s"))
+	if err != nil || ttl <= 0 {
+		return nil, fmt.Errorf("config: CACHE_TTL must be a positive duration")
+	}
+	cfg.CacheTTL = ttl
+
+	if cfg.DatabaseURL == "" {
+		return nil, fmt.Errorf("config: DATABASE_URL is required")
 	}
 	if cfg.Workers <= 0 {
 		cfg.Workers = 4 * runtime.NumCPU()
 	}
-	return cfg
+	if cfg.DBMaxConns <= 0 {
+		cfg.DBMaxConns = max(8, 2*runtime.NumCPU())
+	}
+	if cfg.CacheMaxEntries <= 0 {
+		return nil, fmt.Errorf("config: CACHE_MAX_ENTRIES must be positive")
+	}
+	return cfg, nil
 }
 
 func getenv(k, def string) string {
@@ -43,25 +69,19 @@ func getenv(k, def string) string {
 }
 
 func getenvInt(k string, def int) int {
-	v := os.Getenv(k)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
+	n, err := strconv.Atoi(os.Getenv(k))
 	if err != nil {
 		return def
 	}
 	return n
 }
 
-func splitCSV(s string) []string {
-	parts := strings.Split(s, ",")
-	out := parts[:0]
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
+func getenvBool(k string, def bool) bool {
+	switch strings.ToLower(os.Getenv(k)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
 	}
-	return out
+	return def
 }

@@ -1,50 +1,52 @@
 services:
-  scylla:
-    image: scylladb/scylla:6.2
-    container_name: sharddns-scylla
-    command: --smp 2 --memory 2G --overprovisioned 1 --developer-mode 1
-    ports:
-      - "9042:9042"
+  postgres:
+    image: postgres:17-alpine
+    container_name: sharddns-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sharddns}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sharddns}
+      POSTGRES_DB: ${POSTGRES_DB:-sharddns}
     volumes:
-      - scylla-data:/var/lib/scylla
-      - ./cql:/cql:ro
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
       timeout: 5s
       retries: 10
-      start_period: 30s
 
-  schema-init:
-    image: scylladb/scylla:6.2
-    container_name: sharddns-schema-init
+  nats:
+    image: nats:2-alpine
+    container_name: sharddns-nats
+    command: ["-js=false"]
+
+  sharddnsd:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    container_name: sharddnsd
     depends_on:
-      scylla:
+      postgres:
         condition: service_healthy
-    volumes:
-      - ./cql:/cql:ro
-    entrypoint: ["cqlsh", "scylla", "-f", "/cql/database.cql"]
-    restart: "no"
-
-  sharddns:
-    build: .
-    container_name: sharddns
-    depends_on:
-      schema-init:
-        condition: service_completed_successfully
+      nats:
+        condition: service_started
     cap_add:
       - NET_BIND_SERVICE
     ports:
-      - "53:53/udp"
-      - "53:53/tcp"
-      - "9053:9053"
+      - "${DNS_PORT:-53}:53/udp"
+      - "${DNS_PORT:-53}:53/tcp"
+      - "${API_PORT:-9053}:9053"
     environment:
-      SCYLLA_HOSTS: scylla
-      SCYLLA_KEYSPACE: sharddns
+      DATABASE_URL: postgres://${POSTGRES_USER:-sharddns}:${POSTGRES_PASSWORD:-sharddns}@postgres:5432/${POSTGRES_DB:-sharddns}?sslmode=disable
       DNS_ADDR: :53
-      GRPC_ADDR: :9053
-      WORKERS: 0
-      LOG_LEVEL: debug
+      API_ADDR: :9053
+      API_TOKEN: ${API_TOKEN:-}
+      WORKERS: ${WORKERS:-0}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_TTL: ${CACHE_TTL:-60s}
+      CACHE_MAX_ENTRIES: ${CACHE_MAX_ENTRIES:-100000}
+      NATS_URL: nats://nats:4222
 
 volumes:
-  scylla-data:
+  postgres-data:

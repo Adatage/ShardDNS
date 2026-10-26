@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"net"
 	"strconv"
 	"strings"
 )
@@ -14,27 +13,35 @@ const (
 	TypeNS         uint16 = 2
 	TypeCNAME      uint16 = 5
 	TypeSOA        uint16 = 6
+	TypeHINFO      uint16 = 13
 	TypePTR        uint16 = 12
 	TypeMX         uint16 = 15
 	TypeTXT        uint16 = 16
 	TypeAAAA       uint16 = 28
 	TypeSRV        uint16 = 33
+	TypeNAPTR      uint16 = 35
+	TypeDNAME      uint16 = 39
 	TypeOPT        uint16 = 41
 	TypeDS         uint16 = 43
+	TypeSSHFP      uint16 = 44
 	TypeRRSIG      uint16 = 46
 	TypeNSEC       uint16 = 47
 	TypeDNSKEY     uint16 = 48
 	TypeNSEC3      uint16 = 50
 	TypeNSEC3PARAM uint16 = 51
+	TypeTLSA       uint16 = 52
 	TypeCAA        uint16 = 257
+	TypeAXFR       uint16 = 252
 	TypeANY        uint16 = 255
-	ClassIN        uint16 = 1
 
-	FlagQR uint16 = 0x8000 // Response
-	FlagAA uint16 = 0x0400 // Authoritative Answer
-	FlagTC uint16 = 0x0200 // Truncated
-	FlagRD uint16 = 0x0100 // Recursion Desired (echoed from request)
-	FlagRA uint16 = 0x0080 // Recursion Available
+	ClassIN  uint16 = 1
+	ClassANY uint16 = 255
+
+	FlagQR uint16 = 0x8000
+	FlagAA uint16 = 0x0400
+	FlagTC uint16 = 0x0200
+	FlagRD uint16 = 0x0100
+	FlagRA uint16 = 0x0080
 
 	RcodeNoError        = 0
 	RcodeFormatError    = 1
@@ -44,93 +51,57 @@ const (
 	RcodeRefused        = 5
 
 	MaxUDPMessageSize = 512
+	MaxEDNSUDPSize    = 1232
 	maxNameLen        = 255
 	maxLabelLen       = 63
 	maxPointerHops    = 16
 )
 
+var typeNames = map[uint16]string{
+	TypeA:          "A",
+	TypeNS:         "NS",
+	TypeCNAME:      "CNAME",
+	TypeSOA:        "SOA",
+	TypeHINFO:      "HINFO",
+	TypePTR:        "PTR",
+	TypeMX:         "MX",
+	TypeTXT:        "TXT",
+	TypeAAAA:       "AAAA",
+	TypeSRV:        "SRV",
+	TypeNAPTR:      "NAPTR",
+	TypeDNAME:      "DNAME",
+	TypeOPT:        "OPT",
+	TypeDS:         "DS",
+	TypeSSHFP:      "SSHFP",
+	TypeRRSIG:      "RRSIG",
+	TypeNSEC:       "NSEC",
+	TypeDNSKEY:     "DNSKEY",
+	TypeNSEC3:      "NSEC3",
+	TypeNSEC3PARAM: "NSEC3PARAM",
+	TypeTLSA:       "TLSA",
+	TypeCAA:        "CAA",
+	TypeAXFR:       "AXFR",
+	TypeANY:        "ANY",
+}
+
+var typeCodes = func() map[string]uint16 {
+	m := make(map[string]uint16, len(typeNames)+1)
+	for c, n := range typeNames {
+		m[n] = c
+	}
+	m["*"] = TypeANY
+	return m
+}()
+
 func TypeName(t uint16) string {
-	switch t {
-	case TypeA:
-		return "A"
-	case TypeNS:
-		return "NS"
-	case TypeCNAME:
-		return "CNAME"
-	case TypeSOA:
-		return "SOA"
-	case TypePTR:
-		return "PTR"
-	case TypeMX:
-		return "MX"
-	case TypeTXT:
-		return "TXT"
-	case TypeAAAA:
-		return "AAAA"
-	case TypeSRV:
-		return "SRV"
-	case TypeOPT:
-		return "OPT"
-	case TypeDS:
-		return "DS"
-	case TypeRRSIG:
-		return "RRSIG"
-	case TypeNSEC:
-		return "NSEC"
-	case TypeDNSKEY:
-		return "DNSKEY"
-	case TypeNSEC3:
-		return "NSEC3"
-	case TypeNSEC3PARAM:
-		return "NSEC3PARAM"
-	case TypeCAA:
-		return "CAA"
-	case TypeANY:
-		return "ANY"
+	if n, ok := typeNames[t]; ok {
+		return n
 	}
 	return "TYPE" + strconv.Itoa(int(t))
 }
 
 func TypeCode(name string) uint16 {
-	switch strings.ToUpper(name) {
-	case "A":
-		return TypeA
-	case "NS":
-		return TypeNS
-	case "CNAME":
-		return TypeCNAME
-	case "SOA":
-		return TypeSOA
-	case "PTR":
-		return TypePTR
-	case "MX":
-		return TypeMX
-	case "TXT":
-		return TypeTXT
-	case "AAAA":
-		return TypeAAAA
-	case "SRV":
-		return TypeSRV
-	case "OPT":
-		return TypeOPT
-	case "DS":
-		return TypeDS
-	case "RRSIG":
-		return TypeRRSIG
-	case "NSEC":
-		return TypeNSEC
-	case "DNSKEY":
-		return TypeDNSKEY
-	case "NSEC3":
-		return TypeNSEC3
-	case "NSEC3PARAM":
-		return TypeNSEC3PARAM
-	case "CAA":
-		return TypeCAA
-	case "ANY", "*":
-		return TypeANY
-	}
-	return 0
+	return typeCodes[strings.ToUpper(name)]
 }
 
 type Header struct {
@@ -162,18 +133,32 @@ type Message struct {
 	Answers    []RR
 	Authority  []RR
 	Additional []RR
-	EDNS0     bool
-	EDNS0DO   bool
-	EDNS0Size uint16
+	EDNS0      bool
+	EDNS0DO    bool
+	EDNS0Size  uint16
 }
 
 func (m *Message) SetEDNS0(size uint16, do bool) {
 	if size == 0 {
-		size = 4096
+		size = MaxEDNSUDPSize
 	}
 	m.EDNS0 = true
 	m.EDNS0Size = size
 	m.EDNS0DO = do
+}
+
+func (m *Message) UDPSize() int {
+	if !m.EDNS0 {
+		return MaxUDPMessageSize
+	}
+	size := int(m.EDNS0Size)
+	if size < MaxUDPMessageSize {
+		return MaxUDPMessageSize
+	}
+	if size > MaxEDNSUDPSize {
+		return MaxEDNSUDPSize
+	}
+	return size
 }
 
 func SetRcode(m *Message, rcode int) {
@@ -184,13 +169,20 @@ func (m *Message) Rcode() int {
 	return int(m.Flags & 0x000F)
 }
 
+func (m *Message) Opcode() int {
+	return int(m.Flags>>11) & 0x0F
+}
+
 func NewResponse(req *Message) *Message {
 	resp := &Message{
 		Header: Header{
 			ID:    req.ID,
-			Flags: FlagQR | (req.Flags & FlagRD),
+			Flags: FlagQR | (req.Flags & FlagRD) | (req.Flags & (0x0F << 11)),
 		},
 		Questions: req.Questions,
+	}
+	if req.EDNS0 {
+		resp.SetEDNS0(MaxEDNSUDPSize, req.EDNS0DO)
 	}
 	return resp
 }
@@ -211,6 +203,9 @@ func ParseMessage(buf []byte) (*Message, error) {
 	}
 	off := 12
 
+	if int(m.QDCount)*5 > len(buf)-off {
+		return nil, errors.New("dns: question count exceeds message size")
+	}
 	m.Questions = make([]Question, 0, m.QDCount)
 	for i := uint16(0); i < m.QDCount; i++ {
 		name, next, err := ParseName(buf, off)
@@ -220,13 +215,12 @@ func ParseMessage(buf []byte) (*Message, error) {
 		if next+4 > len(buf) {
 			return nil, errors.New("dns: truncated question")
 		}
-		q := Question{
+		m.Questions = append(m.Questions, Question{
 			Name:  name,
 			Type:  binary.BigEndian.Uint16(buf[next : next+2]),
 			Class: binary.BigEndian.Uint16(buf[next+2 : next+4]),
-		}
+		})
 		off = next + 4
-		m.Questions = append(m.Questions, q)
 	}
 
 	var err error
@@ -240,28 +234,28 @@ func ParseMessage(buf []byte) (*Message, error) {
 	}
 	m.Additional, _, err = parseRRSection(buf, off, m.ARCount)
 	if err != nil {
-		m.ARCount = 0
-		m.Additional = nil
+		return nil, fmt.Errorf("dns: parse additional: %w", err)
 	}
-	if len(m.Additional) > 0 {
-		filtered := m.Additional[:0]
-		for _, rr := range m.Additional {
-			if rr.Type == TypeOPT {
-				m.EDNS0 = true
-				m.EDNS0Size = rr.Class
-				m.EDNS0DO = (rr.TTL & 0x00008000) != 0
-				continue
-			}
-			filtered = append(filtered, rr)
+	filtered := m.Additional[:0]
+	for _, rr := range m.Additional {
+		if rr.Type == TypeOPT {
+			m.EDNS0 = true
+			m.EDNS0Size = rr.Class
+			m.EDNS0DO = rr.TTL&0x00008000 != 0
+			continue
 		}
-		m.Additional = filtered
+		filtered = append(filtered, rr)
 	}
+	m.Additional = filtered
 	return m, nil
 }
 
 func parseRRSection(buf []byte, off int, count uint16) ([]RR, int, error) {
 	if count == 0 {
 		return nil, off, nil
+	}
+	if int(count)*11 > len(buf)-off {
+		return nil, 0, errors.New("record count exceeds message size")
 	}
 	rrs := make([]RR, 0, count)
 	for i := uint16(0); i < count; i++ {
@@ -282,13 +276,7 @@ func parseRRSection(buf []byte, off int, count uint16) ([]RR, int, error) {
 		}
 		rdata := make([]byte, rdlen)
 		copy(rdata, buf[next:next+rdlen])
-		rrs = append(rrs, RR{
-			Name:  name,
-			Type:  typ,
-			Class: class,
-			TTL:   ttl,
-			RData: rdata,
-		})
+		rrs = append(rrs, RR{Name: name, Type: typ, Class: class, TTL: ttl, RData: rdata})
 		off = next + rdlen
 	}
 	return rrs, off, nil
@@ -296,11 +284,12 @@ func parseRRSection(buf []byte, off int, count uint16) ([]RR, int, error) {
 
 func ParseName(buf []byte, offset int) (string, int, error) {
 	var (
-		labels    []string
-		next      = offset
-		followed  bool
-		firstNext int
-		hops      int
+		sb       strings.Builder
+		next     = offset
+		followed bool
+		endOff   int
+		hops     int
+		nameLen  = 1
 	)
 	for {
 		if next >= len(buf) {
@@ -310,15 +299,13 @@ func ParseName(buf []byte, offset int) (string, int, error) {
 		switch b & 0xC0 {
 		case 0x00:
 			if b == 0 {
-				next++
 				if !followed {
-					firstNext = next
+					endOff = next + 1
 				}
-				name := "."
-				if len(labels) > 0 {
-					name = strings.Join(labels, ".")
+				if sb.Len() == 0 {
+					return ".", endOff, nil
 				}
-				return strings.ToLower(name), firstNext, nil
+				return sb.String(), endOff, nil
 			}
 			if int(b) > maxLabelLen {
 				return "", 0, errors.New("label too long")
@@ -328,10 +315,14 @@ func ParseName(buf []byte, offset int) (string, int, error) {
 			if end > len(buf) {
 				return "", 0, errors.New("label overflows buffer")
 			}
-			labels = append(labels, string(buf[start:end]))
-			if totalLen(labels) > maxNameLen {
+			nameLen += 1 + int(b)
+			if nameLen > maxNameLen {
 				return "", 0, errors.New("name too long")
 			}
+			if sb.Len() > 0 {
+				sb.WriteByte('.')
+			}
+			sb.Write(buf[start:end])
 			next = end
 		case 0xC0:
 			if next+1 >= len(buf) {
@@ -339,15 +330,12 @@ func ParseName(buf []byte, offset int) (string, int, error) {
 			}
 			ptr := (int(b&0x3F) << 8) | int(buf[next+1])
 			if !followed {
-				firstNext = next + 2
+				endOff = next + 2
 				followed = true
 			}
 			hops++
 			if hops > maxPointerHops {
 				return "", 0, errors.New("pointer loop")
-			}
-			if ptr >= offset && !followed {
-				return "", 0, errors.New("forward pointer")
 			}
 			next = ptr
 		default:
@@ -356,27 +344,39 @@ func ParseName(buf []byte, offset int) (string, int, error) {
 	}
 }
 
-func totalLen(labels []string) int {
-	n := 1
-	for _, l := range labels {
-		n += 1 + len(l)
-	}
-	return n
-}
-
 func AppendName(buf []byte, name string) []byte {
-	name = strings.TrimSuffix(strings.ToLower(name), ".")
-	if name == "" || name == "." {
+	out, err := PackName(buf, name)
+	if err != nil {
 		return append(buf, 0)
 	}
-	for _, label := range strings.Split(name, ".") {
-		if len(label) == 0 || len(label) > maxLabelLen {
-			return append(buf, 0)
-		}
-		buf = append(buf, byte(len(label)))
-		buf = append(buf, label...)
+	return out
+}
+
+func PackName(buf []byte, name string) ([]byte, error) {
+	name = strings.TrimSuffix(name, ".")
+	if name == "" {
+		return append(buf, 0), nil
 	}
-	return append(buf, 0)
+	if len(name)+2 > maxNameLen {
+		return buf, fmt.Errorf("dns: name %q too long", name)
+	}
+	start := 0
+	for i := 0; i <= len(name); i++ {
+		if i < len(name) && name[i] != '.' {
+			continue
+		}
+		n := i - start
+		if n == 0 {
+			return buf, fmt.Errorf("dns: empty label in %q", name)
+		}
+		if n > maxLabelLen {
+			return buf, fmt.Errorf("dns: label too long in %q", name)
+		}
+		buf = append(buf, byte(n))
+		buf = append(buf, name[start:i]...)
+		start = i + 1
+	}
+	return append(buf, 0), nil
 }
 
 func (m *Message) Pack(buf []byte) ([]byte, error) {
@@ -412,16 +412,13 @@ func (m *Message) Pack(buf []byte) ([]byte, error) {
 	}
 
 	var err error
-	buf, err = appendRRs(buf, m.Answers)
-	if err != nil {
+	if buf, err = appendRRs(buf, m.Answers); err != nil {
 		return nil, err
 	}
-	buf, err = appendRRs(buf, m.Authority)
-	if err != nil {
+	if buf, err = appendRRs(buf, m.Authority); err != nil {
 		return nil, err
 	}
-	buf, err = appendRRs(buf, m.Additional)
-	if err != nil {
+	if buf, err = appendRRs(buf, m.Additional); err != nil {
 		return nil, err
 	}
 	if m.EDNS0 {
@@ -430,9 +427,34 @@ func (m *Message) Pack(buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
+func (m *Message) PackUDP(buf []byte) ([]byte, error) {
+	limit := m.UDPSize()
+	out, err := m.Pack(buf)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) <= limit {
+		return out, nil
+	}
+	if len(m.Additional) > 0 {
+		trimmed := *m
+		trimmed.Additional = nil
+		if out, err = trimmed.Pack(buf); err != nil {
+			return nil, err
+		}
+		if len(out) <= limit {
+			return out, nil
+		}
+	}
+	tc := &Message{Header: m.Header, Questions: m.Questions}
+	tc.Flags |= FlagTC
+	tc.EDNS0, tc.EDNS0DO, tc.EDNS0Size = m.EDNS0, m.EDNS0DO, m.EDNS0Size
+	return tc.Pack(buf)
+}
+
 func AppendOPT(buf []byte, size uint16, dobit bool) []byte {
 	if size == 0 {
-		size = 4096
+		size = MaxEDNSUDPSize
 	}
 	buf = append(buf, 0)
 	var hdr [10]byte
@@ -443,7 +465,6 @@ func AppendOPT(buf []byte, size uint16, dobit bool) []byte {
 		ttl |= 0x00008000
 	}
 	binary.BigEndian.PutUint32(hdr[4:8], ttl)
-	binary.BigEndian.PutUint16(hdr[8:10], 0)
 	return append(buf, hdr[:]...)
 }
 
@@ -462,175 +483,4 @@ func appendRRs(buf []byte, rrs []RR) ([]byte, error) {
 		buf = append(buf, rr.RData...)
 	}
 	return buf, nil
-}
-
-func BuildRData(rtype uint16, text string) ([]byte, error) {
-	text = strings.TrimSpace(text)
-	switch rtype {
-	case TypeA:
-		ip := net.ParseIP(text)
-		if ip == nil {
-			return nil, fmt.Errorf("dns: invalid A rdata %q", text)
-		}
-		v4 := ip.To4()
-		if v4 == nil {
-			return nil, fmt.Errorf("dns: not an IPv4 address: %q", text)
-		}
-		out := make([]byte, 4)
-		copy(out, v4)
-		return out, nil
-
-	case TypeAAAA:
-		ip := net.ParseIP(text)
-		if ip == nil {
-			return nil, fmt.Errorf("dns: invalid AAAA rdata %q", text)
-		}
-		v6 := ip.To16()
-		if v6 == nil || ip.To4() != nil {
-			return nil, fmt.Errorf("dns: not an IPv6 address: %q", text)
-		}
-		out := make([]byte, 16)
-		copy(out, v6)
-		return out, nil
-
-	case TypeNS, TypeCNAME, TypePTR:
-		return AppendName(nil, text), nil
-
-	case TypeMX:
-		fields := strings.Fields(text)
-		if len(fields) != 2 {
-			return nil, fmt.Errorf("dns: MX rdata expects `pref target`, got %q", text)
-		}
-		pref, err := strconv.ParseUint(fields[0], 10, 16)
-		if err != nil {
-			return nil, fmt.Errorf("dns: MX preference: %w", err)
-		}
-		buf := make([]byte, 2, 32)
-		binary.BigEndian.PutUint16(buf, uint16(pref))
-		buf = AppendName(buf, fields[1])
-		return buf, nil
-
-	case TypeTXT:
-		var parts []string
-		if strings.HasPrefix(text, `"`) {
-			rest := text
-			for len(rest) > 0 {
-				rest = strings.TrimSpace(rest)
-				if len(rest) == 0 {
-					break
-				}
-				if rest[0] != '"' {
-					return nil, fmt.Errorf("dns: unexpected token in TXT rdata: %q", rest)
-				}
-				end := strings.Index(rest[1:], `"`)
-				if end < 0 {
-					return nil, fmt.Errorf("dns: unterminated quoted string in TXT rdata")
-				}
-				parts = append(parts, rest[1:end+1])
-				rest = rest[end+2:]
-			}
-			if len(parts) == 0 {
-				parts = []string{""}
-			}
-		} else {
-			s := text
-			for len(s) > 255 {
-				parts = append(parts, s[:255])
-				s = s[255:]
-			}
-			parts = append(parts, s)
-		}
-		buf := make([]byte, 0, len(text)+len(parts))
-		for _, p := range parts {
-			buf = append(buf, byte(len(p)))
-			buf = append(buf, p...)
-		}
-		return buf, nil
-
-	case TypeSOA:
-		fields := strings.Fields(text)
-		if len(fields) != 7 {
-			return nil, fmt.Errorf("dns: SOA rdata expects 7 fields, got %d", len(fields))
-		}
-		serial, err := strconv.ParseUint(fields[2], 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("dns: SOA serial: %w", err)
-		}
-		refresh, err := strconv.ParseUint(fields[3], 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("dns: SOA refresh: %w", err)
-		}
-		retry, err := strconv.ParseUint(fields[4], 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("dns: SOA retry: %w", err)
-		}
-		expire, err := strconv.ParseUint(fields[5], 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("dns: SOA expire: %w", err)
-		}
-		minttl, err := strconv.ParseUint(fields[6], 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("dns: SOA minimum: %w", err)
-		}
-		buf := make([]byte, 0, 64)
-		buf = AppendName(buf, fields[0])
-		buf = AppendName(buf, fields[1])
-		var nums [20]byte
-		binary.BigEndian.PutUint32(nums[0:4], uint32(serial))
-		binary.BigEndian.PutUint32(nums[4:8], uint32(refresh))
-		binary.BigEndian.PutUint32(nums[8:12], uint32(retry))
-		binary.BigEndian.PutUint32(nums[12:16], uint32(expire))
-		binary.BigEndian.PutUint32(nums[16:20], uint32(minttl))
-		buf = append(buf, nums[:]...)
-		return buf, nil
-
-	case TypeSRV:
-		fields := strings.Fields(text)
-		if len(fields) != 4 {
-			return nil, fmt.Errorf("dns: SRV rdata expects `prio weight port target`")
-		}
-		prio, err := strconv.ParseUint(fields[0], 10, 16)
-		if err != nil {
-			return nil, fmt.Errorf("dns: SRV priority: %w", err)
-		}
-		weight, err := strconv.ParseUint(fields[1], 10, 16)
-		if err != nil {
-			return nil, fmt.Errorf("dns: SRV weight: %w", err)
-		}
-		port, err := strconv.ParseUint(fields[2], 10, 16)
-		if err != nil {
-			return nil, fmt.Errorf("dns: SRV port: %w", err)
-		}
-		buf := make([]byte, 6, 32)
-		binary.BigEndian.PutUint16(buf[0:2], uint16(prio))
-		binary.BigEndian.PutUint16(buf[2:4], uint16(weight))
-		binary.BigEndian.PutUint16(buf[4:6], uint16(port))
-		buf = AppendName(buf, fields[3])
-		return buf, nil
-
-	case TypeCAA:
-		fields := strings.SplitN(text, " ", 3)
-		if len(fields) != 3 {
-			return nil, fmt.Errorf("dns: CAA rdata expects `flags tag value`, got %q", text)
-		}
-		flags, err := strconv.ParseUint(strings.TrimSpace(fields[0]), 10, 8)
-		if err != nil {
-			return nil, fmt.Errorf("dns: CAA flags: %w", err)
-		}
-		tag := strings.TrimSpace(fields[1])
-		if len(tag) == 0 || len(tag) > 255 {
-			return nil, fmt.Errorf("dns: CAA tag length must be 1–255")
-		}
-		value := strings.TrimSpace(fields[2])
-		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
-			value = value[1 : len(value)-1]
-		}
-		buf := make([]byte, 0, 2+len(tag)+len(value))
-		buf = append(buf, byte(flags), byte(len(tag)))
-		buf = append(buf, tag...)
-		buf = append(buf, value...)
-		return buf, nil
-	}
-
-	return nil, fmt.Errorf("dns: unsupported RR type %d", rtype)
 }

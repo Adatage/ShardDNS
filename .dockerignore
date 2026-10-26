@@ -1,21 +1,13 @@
-# Version control
 .git/
 .gitignore
-
-# Build output
 bin/
 dist/
-
-# Docs & meta
 README.md
 LICENSE
-
-# Container files (not needed in image)
+TODO.md
 Containerfile
 Dockerfile
 .dockerignore
-
-# Dev tooling
 .vscode/
 .idea/
 *.env

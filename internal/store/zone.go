@@ -5,63 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/gocql/gocql"
+	"github.com/jackc/pgx/v5"
 )
 
-var ErrNotFound = errors.New("store: not found")
+const zoneColumns = `name, primary_ns, admin_email, serial, refresh, retry, expire, minimum_ttl, created_at, updated_at`
 
-type Zone struct {
-	Name       string
-	PrimaryNS  string
-	AdminEmail string
-	Serial     int64
-	Refresh    int32
-	Retry      int32
-	Expire     int32
-	MinTTL     int32
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
+const bumpSerial = `serial = GREATEST(serial + 1, extract(epoch from now())::bigint), updated_at = now()`
 
-func normalizeZone(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	name = strings.TrimSuffix(name, ".")
-	return name
-}
-
-func (s *Store) CreateZone(ctx context.Context, z *Zone) error {
-	z.Name = normalizeZone(z.Name)
-	if z.Name == "" {
-		return fmt.Errorf("store: zone name required")
-	}
-	now := time.Now().UTC()
-	if z.CreatedAt.IsZero() {
-		z.CreatedAt = now
-	}
-	z.UpdatedAt = now
-	if z.Serial == 0 {
-		z.Serial = now.Unix()
-	}
-	return s.Session.Query(s.stmts.insertZone,
-		z.Name, z.PrimaryNS, z.AdminEmail, z.Serial,
-		z.Refresh, z.Retry, z.Expire, z.MinTTL,
-		z.CreatedAt, z.UpdatedAt,
-	).WithContext(ctx).Consistency(gocql.LocalQuorum).Exec()
-}
-
-func (s *Store) GetZone(ctx context.Context, name string) (*Zone, error) {
-	name = normalizeZone(name)
+func scanZone(row pgx.Row) (*Zone, error) {
 	z := &Zone{}
-	err := s.Session.Query(s.stmts.selectZone, name).
-		WithContext(ctx).
-		Consistency(gocql.LocalOne).
-		Scan(&z.Name, &z.PrimaryNS, &z.AdminEmail, &z.Serial,
-			&z.Refresh, &z.Retry, &z.Expire, &z.MinTTL,
-			&z.CreatedAt, &z.UpdatedAt)
+	err := row.Scan(&z.Name, &z.PrimaryNS, &z.AdminEmail, &z.Serial,
+		&z.Refresh, &z.Retry, &z.Expire, &z.MinTTL, &z.CreatedAt, &z.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, gocql.ErrNotFound) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -69,63 +26,90 @@ func (s *Store) GetZone(ctx context.Context, name string) (*Zone, error) {
 	return z, nil
 }
 
-func (s *Store) UpdateZone(ctx context.Context, z *Zone) error {
-	z.Name = normalizeZone(z.Name)
-	if z.Name == "" {
-		return fmt.Errorf("store: zone name required")
+func (s *Store) CreateZone(ctx context.Context, z *Zone) (*Zone, error) {
+	name := NormalizeZone(z.Name)
+	if name == "" {
+		return nil, fmt.Errorf("store: zone name required")
 	}
-	now := time.Now().UTC()
-	z.UpdatedAt = now
-	if z.Serial == 0 {
-		z.Serial = now.Unix()
+	out, err := scanZone(s.pool.QueryRow(ctx,
+		`INSERT INTO zones (name, primary_ns, admin_email, serial, refresh, retry, expire, minimum_ttl)
+		 VALUES ($1, $2, $3, extract(epoch from now())::bigint, $4, $5, $6, $7)
+		 RETURNING `+zoneColumns,
+		name, z.PrimaryNS, z.AdminEmail, z.Refresh, z.Retry, z.Expire, z.MinTTL))
+	if err != nil {
+		if isPgCode(err, "23505") {
+			return nil, fmt.Errorf("%w: zone %q already exists", ErrConflict, name)
+		}
+		return nil, err
 	}
-	return s.Session.Query(s.stmts.updateZone,
-		z.PrimaryNS, z.AdminEmail, z.Serial,
-		z.Refresh, z.Retry, z.Expire, z.MinTTL,
-		z.UpdatedAt, z.Name,
-	).WithContext(ctx).Consistency(gocql.LocalQuorum).Exec()
+	return out, nil
+}
+
+func (s *Store) GetZone(ctx context.Context, name string) (*Zone, error) {
+	return scanZone(s.pool.QueryRow(ctx,
+		`SELECT `+zoneColumns+` FROM zones WHERE name = $1`, NormalizeZone(name)))
+}
+
+func (s *Store) UpdateZone(ctx context.Context, z *Zone) (*Zone, error) {
+	return scanZone(s.pool.QueryRow(ctx,
+		`UPDATE zones SET primary_ns = $2, admin_email = $3, refresh = $4, retry = $5, expire = $6, minimum_ttl = $7, `+bumpSerial+`
+		 WHERE name = $1 RETURNING `+zoneColumns,
+		NormalizeZone(z.Name), z.PrimaryNS, z.AdminEmail, z.Refresh, z.Retry, z.Expire, z.MinTTL))
 }
 
 func (s *Store) DeleteZone(ctx context.Context, name string) error {
-	name = normalizeZone(name)
-	return s.Session.Query(s.stmts.deleteZone, name).
-		WithContext(ctx).
-		Consistency(gocql.LocalQuorum).
-		Exec()
+	tag, err := s.pool.Exec(ctx, `DELETE FROM zones WHERE name = $1`, NormalizeZone(name))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
-func (s *Store) ListZones(ctx context.Context, pageSize int, pageState []byte) ([]*Zone, []byte, error) {
-	if pageSize <= 0 {
-		pageSize = 100
+func (s *Store) ListZones(ctx context.Context, limit int, after string) ([]*Zone, string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+zoneColumns+` FROM zones WHERE name > $1 ORDER BY name LIMIT $2`, after, limit+1)
+	if err != nil {
+		return nil, "", err
 	}
-	q := s.Session.Query(s.stmts.listZones).
-		WithContext(ctx).
-		Consistency(gocql.LocalOne).
-		PageSize(pageSize)
-	if len(pageState) > 0 {
-		q = q.PageState(pageState)
-	}
-	iter := q.Iter()
-	defer iter.Close()
+	defer rows.Close()
 
-	zones := make([]*Zone, 0, pageSize)
-	for {
-		z := &Zone{}
-		if !iter.Scan(&z.Name, &z.PrimaryNS, &z.AdminEmail, &z.Serial,
-			&z.Refresh, &z.Retry, &z.Expire, &z.MinTTL,
-			&z.CreatedAt, &z.UpdatedAt) {
-			break
+	zones := make([]*Zone, 0, limit)
+	for rows.Next() {
+		z, err := scanZone(rows)
+		if err != nil {
+			return nil, "", err
 		}
 		zones = append(zones, z)
 	}
-	next := iter.PageState()
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(zones) > limit {
+		zones = zones[:limit]
+		next = zones[limit-1].Name
+	}
+	return zones, next, nil
+}
 
-	var nextCopy []byte
-	if len(next) > 0 {
-		nextCopy = append(nextCopy, next...)
+func (s *Store) FindZone(ctx context.Context, qname string) (*Zone, error) {
+	qname = NormalizeZone(qname)
+	candidates := make([]string, 0, 8)
+	for name := qname; name != ""; {
+		candidates = append(candidates, name)
+		i := strings.IndexByte(name, '.')
+		if i < 0 {
+			break
+		}
+		name = name[i+1:]
 	}
-	if err := iter.Close(); err != nil {
-		return nil, nil, err
+	if len(candidates) == 0 {
+		return nil, ErrNotFound
 	}
-	return zones, nextCopy, nil
+	return scanZone(s.pool.QueryRow(ctx,
+		`SELECT `+zoneColumns+` FROM zones WHERE name = ANY($1) ORDER BY length(name) DESC LIMIT 1`,
+		candidates))
 }

@@ -8,17 +8,25 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
-	"github.com/Adatage/ShardDNS/internal/config"
 	"github.com/Adatage/ShardDNS/internal/store"
 )
 
+const (
+	bufSize       = 4096
+	maxTCPConns   = 4096
+	tcpIdle       = 15 * time.Second
+	tcpWriteLimit = 5 * time.Second
+	socketBuffer  = 4 << 20
+)
+
 type job struct {
-	data    []byte
-	udpAddr *net.UDPAddr
-	tcpConn net.Conn
+	buf  *[]byte
+	n    int
+	addr netip.AddrPort
 }
 
 type Server struct {
@@ -26,46 +34,36 @@ type Server struct {
 	tcpListener net.Listener
 	handler     *Handler
 	workers     int
-	bufSize     int
 	pool        sync.Pool
 	jobs        chan job
 	logger      *slog.Logger
 	addr        string
+	tcpSlots    chan struct{}
 }
 
-func New(cfg *config.Config, s *store.Store, logger *slog.Logger) *Server {
+func New(addr string, workers int, resolver store.Resolver, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	srv := &Server{
-		handler: NewHandler(s, logger),
-		workers: cfg.Workers,
-		bufSize: 4096,
-		logger:  logger,
-		addr:    cfg.DNSAddr,
-		jobs: make(chan job, cfg.Workers*4),
+	if workers < 1 {
+		workers = 1
 	}
-	bufSize := 4096
-	srv.pool.New = func() any {
+	s := &Server{
+		handler:  NewHandler(resolver, logger),
+		workers:  workers,
+		logger:   logger,
+		addr:     addr,
+		jobs:     make(chan job, workers*16),
+		tcpSlots: make(chan struct{}, maxTCPConns),
+	}
+	s.pool.New = func() any {
 		b := make([]byte, bufSize)
 		return &b
 	}
-	return srv
+	return s
 }
 
-func (s *Server) getBuf() *[]byte {
-	return s.pool.Get().(*[]byte)
-}
-
-func (s *Server) putBuf(b *[]byte) {
-	if cap(*b) < s.bufSize {
-		return
-	}
-	*b = (*b)[:s.bufSize]
-	s.pool.Put(b)
-}
-
-func (s *Server) Start(ctx context.Context) error {
+func (s *Server) Listen() error {
 	udpAddr, err := net.ResolveUDPAddr("udp", s.addr)
 	if err != nil {
 		return fmt.Errorf("dns: resolve udp addr: %w", err)
@@ -74,74 +72,119 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dns: listen udp: %w", err)
 	}
-	s.udpConn = udpConn
+	_ = udpConn.SetReadBuffer(socketBuffer)
+	_ = udpConn.SetWriteBuffer(socketBuffer)
 
 	tcpLn, err := net.Listen("tcp", s.addr)
 	if err != nil {
-		s.udpConn.Close()
+		udpConn.Close()
 		return fmt.Errorf("dns: listen tcp: %w", err)
 	}
+	s.udpConn = udpConn
 	s.tcpListener = tcpLn
+	return nil
+}
 
+func (s *Server) Serve(ctx context.Context) error {
+	if s.udpConn == nil {
+		if err := s.Listen(); err != nil {
+			return err
+		}
+	}
 	s.logger.Info("DNS server listening", "addr", s.addr, "workers", s.workers)
 
-	var wg sync.WaitGroup
+	var workers, readers, conns sync.WaitGroup
 
-	wg.Add(s.workers)
+	workers.Add(s.workers)
 	for i := 0; i < s.workers; i++ {
 		go func() {
-			defer wg.Done()
-			s.workerLoop(ctx)
+			defer workers.Done()
+			for j := range s.jobs {
+				s.serveUDP(ctx, j)
+			}
 		}()
 	}
 
-	wg.Add(1)
+	readers.Add(2)
 	go func() {
-		defer wg.Done()
+		defer readers.Done()
 		s.udpReadLoop(ctx)
 	}()
-
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
-		s.tcpAcceptLoop(ctx)
+		defer readers.Done()
+		s.tcpAcceptLoop(ctx, &conns)
 	}()
 
 	<-ctx.Done()
 	s.logger.Info("DNS server shutting down")
 	_ = s.udpConn.Close()
 	_ = s.tcpListener.Close()
+	readers.Wait()
 	close(s.jobs)
-	wg.Wait()
+	workers.Wait()
+	conns.Wait()
 	return nil
 }
 
 func (s *Server) udpReadLoop(ctx context.Context) {
 	for {
-		if ctx.Err() != nil {
-			return
-		}
-		bufPtr := s.getBuf()
-		buf := *bufPtr
-		n, addr, err := s.udpConn.ReadFromUDP(buf)
+		bp := s.pool.Get().(*[]byte)
+		n, addr, err := s.udpConn.ReadFromUDPAddrPort(*bp)
 		if err != nil {
-			s.putBuf(bufPtr)
+			s.pool.Put(bp)
 			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 				return
 			}
 			s.logger.Warn("udp read error", "err", err)
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 		select {
-		case s.jobs <- job{data: buf[:n], udpAddr: addr}:
-		case <-ctx.Done():
-			s.putBuf(bufPtr)
-			return
+		case s.jobs <- job{buf: bp, n: n, addr: addr}:
+		default:
+			s.pool.Put(bp)
 		}
 	}
 }
 
-func (s *Server) tcpAcceptLoop(ctx context.Context) {
+func (s *Server) serveUDP(ctx context.Context, j job) {
+	bp := j.buf
+	defer s.pool.Put(bp)
+
+	data := (*bp)[:j.n]
+	req, err := ParseMessage(data)
+	if err != nil {
+		s.logger.Debug("parse error", "err", err)
+		if len(data) >= 12 && data[2]&0x80 == 0 {
+			out := formErr(data)
+			_, _ = s.udpConn.WriteToUDPAddrPort(out, j.addr)
+		}
+		return
+	}
+	if req.Flags&FlagQR != 0 {
+		return
+	}
+
+	resp := s.handler.Handle(ctx, req)
+	out, err := resp.PackUDP((*bp)[:0])
+	if err != nil {
+		s.logger.Warn("pack error", "err", err)
+		return
+	}
+	if _, err := s.udpConn.WriteToUDPAddrPort(out, j.addr); err != nil {
+		s.logger.Debug("udp write error", "err", err)
+	}
+}
+
+func formErr(req []byte) []byte {
+	out := make([]byte, 12)
+	copy(out[0:2], req[0:2])
+	out[2] = 0x80 | req[2]&0x79
+	out[3] = RcodeFormatError
+	return out
+}
+
+func (s *Server) tcpAcceptLoop(ctx context.Context, conns *sync.WaitGroup) {
 	for {
 		conn, err := s.tcpListener.Accept()
 		if err != nil {
@@ -149,114 +192,79 @@ func (s *Server) tcpAcceptLoop(ctx context.Context) {
 				return
 			}
 			s.logger.Warn("tcp accept error", "err", err)
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
-		go s.tcpConnLoop(ctx, conn)
+		select {
+		case s.tcpSlots <- struct{}{}:
+		default:
+			conn.Close()
+			continue
+		}
+		conns.Add(1)
+		go func() {
+			defer conns.Done()
+			defer func() { <-s.tcpSlots }()
+			s.tcpConnLoop(ctx, conn)
+		}()
 	}
 }
 
 func (s *Server) tcpConnLoop(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+
+	bp := s.pool.Get().(*[]byte)
+	defer s.pool.Put(bp)
+	var lenBuf [2]byte
+
 	for {
-		if ctx.Err() != nil {
-			return
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-		var lenBuf [2]byte
+		_ = conn.SetReadDeadline(time.Now().Add(tcpIdle))
 		if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
-			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
-				s.logger.Debug("tcp read length", "err", err)
-			}
 			return
 		}
 		msgLen := int(binary.BigEndian.Uint16(lenBuf[:]))
-		if msgLen == 0 || msgLen > 65535 {
+		if msgLen < 12 {
 			return
 		}
 		data := make([]byte, msgLen)
 		if _, err := io.ReadFull(conn, data); err != nil {
-			s.logger.Debug("tcp read body", "err", err)
 			return
 		}
-		select {
-		case s.jobs <- job{data: data, tcpConn: conn}:
-		case <-ctx.Done():
-			return
-		}
-	}
-}
 
-func (s *Server) workerLoop(ctx context.Context) {
-	for j := range s.jobs {
-		s.serve(ctx, j)
-	}
-}
-
-func (s *Server) serve(ctx context.Context, j job) {
-	req, err := ParseMessage(j.data)
-	if err != nil {
-		if j.udpAddr != nil {
-			s.recycle(j.data)
-		}
-		s.logger.Debug("parse error", "err", err)
-		return
-	}
-
-	resp := s.handler.Handle(ctx, req)
-
-	if j.udpAddr != nil {
-		outPtr := s.getBuf()
-		out, err := resp.Pack((*outPtr)[:0])
+		req, err := ParseMessage(data)
 		if err != nil {
-			s.putBuf(outPtr)
-			s.recycle(j.data)
-			s.logger.Warn("pack error", "err", err)
+			s.logger.Debug("parse error", "err", err)
+			if data[2]&0x80 == 0 {
+				if !s.writeTCP(conn, formErr(data), bp) {
+					return
+				}
+				continue
+			}
 			return
 		}
-		if len(out) > MaxUDPMessageSize {
-			tcResp := &Message{
-				Header:    resp.Header,
-				Questions: resp.Questions,
-			}
-			tcResp.Flags |= FlagTC
-			out2, err := tcResp.Pack(out[:0])
-			if err == nil {
-				out = out2
-			}
+		if req.Flags&FlagQR != 0 {
+			return
 		}
-		if _, err := s.udpConn.WriteToUDP(out, j.udpAddr); err != nil {
-			s.logger.Debug("udp write error", "err", err)
-		}
-		bp := out
-		s.pool.Put(&bp)
-		s.recycle(j.data)
-		return
-	}
 
-	out, err := resp.Pack(nil)
-	if err != nil {
-		s.logger.Warn("pack error", "err", err)
-		return
-	}
-	if len(out) > 65535 {
-		s.logger.Warn("response too large for TCP", "size", len(out))
-		return
-	}
-	var lp [2]byte
-	binary.BigEndian.PutUint16(lp[:], uint16(len(out)))
-	_ = j.tcpConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if _, err := j.tcpConn.Write(lp[:]); err != nil {
-		return
-	}
-	if _, err := j.tcpConn.Write(out); err != nil {
-		return
+		resp := s.handler.Handle(ctx, req)
+		out, err := resp.Pack((*bp)[2:2])
+		if err != nil || len(out) > 65535 {
+			s.logger.Warn("tcp pack error", "err", err, "size", len(out))
+			return
+		}
+		if !s.writeTCP(conn, out, bp) {
+			return
+		}
 	}
 }
 
-func (s *Server) recycle(data []byte) {
-	if cap(data) < s.bufSize {
-		return
-	}
-	full := data[:cap(data)]
-	s.pool.Put(&full)
+func (s *Server) writeTCP(conn net.Conn, msg []byte, bp *[]byte) bool {
+	frame := append((*bp)[:0], 0, 0)
+	frame = append(frame, msg...)
+	binary.BigEndian.PutUint16(frame[:2], uint16(len(msg)))
+	_ = conn.SetWriteDeadline(time.Now().Add(tcpWriteLimit))
+	_, err := conn.Write(frame)
+	return err == nil
 }

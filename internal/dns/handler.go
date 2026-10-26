@@ -5,230 +5,362 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Adatage/ShardDNS/internal/store"
 )
 
+const (
+	maxChain      = 8
+	maxAdditional = 16
+	typeIXFR      = 251
+)
+
 type Handler struct {
-	Store  *store.Store
-	Logger *slog.Logger
+	Resolver store.Resolver
+	Logger   *slog.Logger
+	rotate   atomic.Uint32
 }
 
-func NewHandler(s *store.Store, logger *slog.Logger) *Handler {
+func NewHandler(r store.Resolver, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{Store: s, Logger: logger}
+	return &Handler{Resolver: r, Logger: logger}
 }
 
 func (h *Handler) Handle(ctx context.Context, req *Message) *Message {
 	resp := NewResponse(req)
 
-	if len(req.Questions) == 0 {
-		SetRcode(resp, RcodeFormatError)
-		return resp
-	}
-	if opcode := (req.Flags >> 11) & 0x0F; opcode != 0 {
+	if req.Opcode() != 0 {
 		SetRcode(resp, RcodeNotImplemented)
 		return resp
 	}
-
-	qctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
+	if len(req.Questions) != 1 {
+		SetRcode(resp, RcodeFormatError)
+		return resp
+	}
 	q := req.Questions[0]
+	if q.Class != ClassIN && q.Class != ClassANY {
+		SetRcode(resp, RcodeRefused)
+		return resp
+	}
+	switch q.Type {
+	case TypeOPT:
+		SetRcode(resp, RcodeFormatError)
+		return resp
+	case TypeAXFR, typeIXFR:
+		SetRcode(resp, RcodeRefused)
+		return resp
+	}
+
 	qname := strings.ToLower(strings.TrimSuffix(q.Name, "."))
 	if qname == "" {
 		SetRcode(resp, RcodeRefused)
 		return resp
 	}
 
-	zone, err := h.findZone(qctx, qname)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	zone, err := h.Resolver.FindZone(ctx, qname)
 	if err != nil {
-		h.Logger.ErrorContext(qctx, "findZone failed", "name", qname, "err", err)
+		if errors.Is(err, store.ErrNotFound) {
+			SetRcode(resp, RcodeRefused)
+			return resp
+		}
+		h.Logger.ErrorContext(ctx, "find zone failed", "name", qname, "err", err)
 		SetRcode(resp, RcodeServerFailure)
-		return resp
-	}
-	if zone == "" {
-		SetRcode(resp, RcodeRefused)
 		return resp
 	}
 
 	resp.Flags |= FlagAA
-
-	if q.Type == TypeANY {
-		h.answerANY(qctx, resp, zone, qname)
-		return resp
-	}
-
-	qtypeName := TypeName(q.Type)
-	records, err := h.Store.LookupRecords(qctx, zone, qname, qtypeName)
-	if err != nil {
-		h.Logger.ErrorContext(qctx, "LookupRecords failed",
-			"zone", zone, "name", qname, "type", qtypeName, "err", err)
+	if err := h.resolve(ctx, resp, zone, qname, strings.TrimSuffix(q.Name, "."), q.Type); err != nil {
+		h.Logger.ErrorContext(ctx, "resolve failed", "zone", zone.Name, "name", qname, "type", TypeName(q.Type), "err", err)
+		resp.Answers, resp.Authority, resp.Additional = nil, nil, nil
+		resp.Flags &^= FlagAA
 		SetRcode(resp, RcodeServerFailure)
-		return resp
 	}
-
-	if q.Type == TypeSOA {
-		h.appendRecords(resp, &resp.Answers, records, qname)
-		if len(resp.Answers) == 0 {
-			// No SOA stored for this name. Determine whether the name exists at all
-			// so we can return NXDOMAIN vs NODATA correctly (RFC 2308).
-			exists, err := h.Store.NameExists(qctx, zone, qname)
-			if err != nil {
-				h.Logger.WarnContext(qctx, "NameExists failed", "zone", zone, "name", qname, "err", err)
-				SetRcode(resp, RcodeServerFailure)
-				return resp
-			}
-			if exists {
-				h.setNOData(qctx, resp, zone)
-			} else {
-				h.setNXDomain(qctx, resp, zone)
-			}
-		}
-		return resp
-	}
-
-	if len(records) == 0 {
-		if q.Type != TypeCNAME {
-			cnames, err := h.Store.LookupRecords(qctx, zone, qname, "CNAME")
-			if err != nil {
-				// A DB error here must not silently become NXDOMAIN.
-				h.Logger.ErrorContext(qctx, "LookupRecords (CNAME) failed",
-					"zone", zone, "name", qname, "err", err)
-				SetRcode(resp, RcodeServerFailure)
-				return resp
-			}
-			if len(cnames) > 0 {
-				h.appendRecords(resp, &resp.Answers, cnames, qname)
-				target := strings.TrimSuffix(strings.ToLower(cnames[0].RData), ".")
-				if target != "" && strings.HasSuffix(target, zone) {
-					more, err := h.Store.LookupRecords(qctx, zone, target, qtypeName)
-					if err == nil && len(more) > 0 {
-						h.appendRecords(resp, &resp.Answers, more, target)
-					}
-				}
-				return resp
-			}
-		}
-
-		// No records of the queried type and no CNAME. Use NameExists to
-		// distinguish a true NXDOMAIN (name absent) from NODATA (name present,
-		// type absent) so we never cache a false NXDOMAIN for a real name.
-		exists, err := h.Store.NameExists(qctx, zone, qname)
-		if err != nil {
-			h.Logger.WarnContext(qctx, "NameExists failed", "zone", zone, "name", qname, "err", err)
-			SetRcode(resp, RcodeServerFailure)
-			return resp
-		}
-		if exists {
-			h.setNOData(qctx, resp, zone)
-		} else {
-			h.setNXDomain(qctx, resp, zone)
-		}
-		return resp
-	}
-
-	h.appendRecords(resp, &resp.Answers, records, qname)
 	return resp
 }
 
-func (h *Handler) answerANY(ctx context.Context, resp *Message, zone, qname string) {
-	records, err := h.Store.LookupAllTypes(ctx, zone, qname)
-	if err != nil {
-		h.Logger.ErrorContext(ctx, "LookupAllTypes failed",
-			"zone", zone, "name", qname, "err", err)
-		SetRcode(resp, RcodeServerFailure)
-		return
-	}
-	if len(records) == 0 {
-		h.setNXDomain(ctx, resp, zone)
-		return
-	}
-	h.appendRecords(resp, &resp.Answers, records, qname)
+type match struct {
+	records []*store.Record
+	exists  bool
+	cutName string
+	cut     []*store.Record
+	dname   *store.Record
+	dnameAt string
 }
 
-func (h *Handler) appendRecords(resp *Message, section *[]RR, records []*store.Record, qname string) {
-	for _, r := range records {
-		typ := TypeCode(r.Type)
-		if typ == 0 {
-			h.Logger.Warn("skipping record with unknown type",
-				"zone", r.Zone, "name", r.Name, "type", r.Type)
-			continue
-		}
-		rdata, err := BuildRData(typ, r.RData)
+func (h *Handler) resolve(ctx context.Context, resp *Message, zone *store.Zone, name, owner string, qtype uint16) error {
+	for hops := 0; hops <= maxChain; hops++ {
+		m, err := h.lookup(ctx, zone, name, qtype)
 		if err != nil {
-			h.Logger.Warn("skipping record with invalid rdata",
-				"zone", r.Zone, "name", r.Name, "type", r.Type, "err", err)
+			return err
+		}
+
+		if m.cut != nil {
+			resp.Flags &^= FlagAA
+			for _, r := range m.cut {
+				h.appendRR(&resp.Authority, m.cutName, r)
+			}
+			h.addGlue(ctx, resp, zone, m.cut)
+			return nil
+		}
+
+		if m.dname != nil {
+			h.appendRR(&resp.Answers, m.dnameAt, m.dname)
+			target := RDataNames(TypeDNAME, wireOf(m.dname))
+			if target == "" {
+				return nil
+			}
+			next := strings.TrimSuffix(name, "."+m.dnameAt) + "." + strings.ToLower(target)
+			if len(next) > 253 {
+				SetRcode(resp, RcodeServerFailure)
+				return nil
+			}
+			cname, err := PackName(nil, next)
+			if err != nil {
+				return nil
+			}
+			resp.Answers = append(resp.Answers, RR{Name: owner, Type: TypeCNAME, Class: ClassIN, TTL: uint32(m.dname.TTL), RData: cname})
+			nz, ok, err := h.zoneFor(ctx, next)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return nil
+			}
+			zone, name, owner = nz, next, next
 			continue
 		}
-		name := qname
-		if name == "" {
-			name = r.Zone
+
+		apex := name == zone.Name
+		records := m.records
+
+		if qtype == TypeANY {
+			if apex {
+				if soa, err := h.soaRR(zone); err == nil {
+					resp.Answers = append(resp.Answers, soa)
+				}
+			}
+			h.appendSet(&resp.Answers, owner, records)
+			if len(resp.Answers) == 0 {
+				h.negative(resp, zone, m.exists || apex)
+			}
+			return nil
 		}
-		*section = append(*section, RR{
-			Name:  name,
-			Type:  typ,
-			Class: ClassIN,
-			TTL:   uint32(r.TTL),
-			RData: rdata,
-		})
+
+		if apex && qtype == TypeSOA {
+			soa, err := h.soaRR(zone)
+			if err != nil {
+				return err
+			}
+			resp.Answers = append(resp.Answers, soa)
+			return nil
+		}
+
+		matched := filterType(records, qtype)
+		if len(matched) > 0 {
+			h.appendSet(&resp.Answers, owner, matched)
+			h.addAdditional(ctx, resp, zone, qtype, matched)
+			return nil
+		}
+
+		if qtype != TypeCNAME {
+			if cnames := filterType(records, TypeCNAME); len(cnames) > 0 {
+				h.appendSet(&resp.Answers, owner, cnames)
+				target := strings.ToLower(RDataNames(TypeCNAME, wireOf(cnames[0])))
+				if target == "" {
+					return nil
+				}
+				nz, ok, err := h.zoneFor(ctx, target)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return nil
+				}
+				zone, name, owner = nz, target, target
+				continue
+			}
+		}
+
+		h.negative(resp, zone, len(records) > 0 || m.exists || apex)
+		return nil
 	}
+	return nil
 }
 
-func (h *Handler) setNXDomain(ctx context.Context, resp *Message, zone string) {
-	SetRcode(resp, RcodeNXDomain)
-	h.appendSOAAuthority(ctx, resp, zone)
-}
-
-// setNOData sends a NODATA response (NOERROR, empty ANSWER, SOA in AUTHORITY).
-// Use this when the queried name exists in the zone but has no records of the
-// requested type (RFC 2308 §2.2).
-func (h *Handler) setNOData(ctx context.Context, resp *Message, zone string) {
-	h.appendSOAAuthority(ctx, resp, zone)
-}
-
-func (h *Handler) appendSOAAuthority(ctx context.Context, resp *Message, zone string) {
-	soa, err := h.Store.GetSOA(ctx, zone)
+func (h *Handler) lookup(ctx context.Context, zone *store.Zone, name string, qtype uint16) (*match, error) {
+	set, err := h.Resolver.LookupName(ctx, zone.Name, name)
 	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			h.Logger.WarnContext(ctx, "GetSOA failed", "zone", zone, "err", err)
+		return nil, err
+	}
+	if len(set.Records) > 0 {
+		if name != zone.Name && qtype != TypeDS {
+			if ns := filterType(set.Records, TypeNS); len(ns) > 0 {
+				return &match{cutName: name, cut: ns}, nil
+			}
 		}
-		return
+		return &match{records: set.Records, exists: true}, nil
 	}
-	rdata, err := BuildRData(TypeSOA, soa.RData)
-	if err != nil {
-		h.Logger.WarnContext(ctx, "invalid SOA rdata", "zone", zone, "err", err)
-		return
+	if set.HasChildren || name == zone.Name {
+		return &match{exists: true}, nil
 	}
-	resp.Authority = append(resp.Authority, RR{
-		Name:  zone,
-		Type:  TypeSOA,
-		Class: ClassIN,
-		TTL:   uint32(soa.TTL),
-		RData: rdata,
-	})
-}
 
-func (h *Handler) findZone(ctx context.Context, qname string) (string, error) {
-	name := qname
-	for {
-		z, err := h.Store.GetZone(ctx, name)
-		if err == nil {
-			return z.Name, nil
-		}
-		if !errors.Is(err, store.ErrNotFound) {
-			return "", err
-		}
-		i := strings.IndexByte(name, '.')
+	encloser := name
+	for encloser != zone.Name {
+		i := strings.IndexByte(encloser, '.')
 		if i < 0 {
-			return "", nil
+			break
 		}
-		name = name[i+1:]
-		if name == "" {
-			return "", nil
+		encloser = encloser[i+1:]
+		aset, err := h.Resolver.LookupName(ctx, zone.Name, encloser)
+		if err != nil {
+			return nil, err
+		}
+		if encloser != zone.Name {
+			if ns := filterType(aset.Records, TypeNS); len(ns) > 0 {
+				return &match{cutName: encloser, cut: ns}, nil
+			}
+			if dn := filterType(aset.Records, TypeDNAME); len(dn) > 0 {
+				return &match{dname: dn[0], dnameAt: encloser}, nil
+			}
+		}
+		if aset.Exists() || encloser == zone.Name {
+			break
+		}
+	}
+
+	wset, err := h.Resolver.LookupName(ctx, zone.Name, "*."+encloser)
+	if err != nil {
+		return nil, err
+	}
+	if len(wset.Records) > 0 {
+		return &match{records: wset.Records, exists: true}, nil
+	}
+	return &match{}, nil
+}
+
+func (h *Handler) zoneFor(ctx context.Context, name string) (*store.Zone, bool, error) {
+	z, err := h.Resolver.FindZone(ctx, name)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return z, true, nil
+}
+
+func (h *Handler) negative(resp *Message, zone *store.Zone, exists bool) {
+	if !exists {
+		SetRcode(resp, RcodeNXDomain)
+	}
+	if soa, err := h.soaRR(zone); err == nil {
+		if soa.TTL > uint32(zone.MinTTL) {
+			soa.TTL = uint32(zone.MinTTL)
+		}
+		resp.Authority = append(resp.Authority, soa)
+	} else {
+		h.Logger.Warn("invalid SOA parameters", "zone", zone.Name, "err", err)
+	}
+}
+
+func (h *Handler) soaRR(zone *store.Zone) (RR, error) {
+	admin := strings.Replace(zone.AdminEmail, "@", ".", 1)
+	rdata, err := BuildSOA(zone.PrimaryNS, admin, uint32(zone.Serial),
+		uint32(zone.Refresh), uint32(zone.Retry), uint32(zone.Expire), uint32(zone.MinTTL))
+	if err != nil {
+		return RR{}, err
+	}
+	return RR{Name: zone.Name, Type: TypeSOA, Class: ClassIN, TTL: uint32(zone.MinTTL), RData: rdata}, nil
+}
+
+func (h *Handler) appendSet(section *[]RR, owner string, records []*store.Record) {
+	n := len(records)
+	if n == 0 {
+		return
+	}
+	start := 0
+	if n > 1 {
+		start = int(h.rotate.Add(1) % uint32(n))
+	}
+	for i := 0; i < n; i++ {
+		h.appendRR(section, owner, records[(start+i)%n])
+	}
+}
+
+func (h *Handler) appendRR(section *[]RR, owner string, r *store.Record) {
+	typ := TypeCode(r.Type)
+	wire := wireOf(r)
+	if typ == 0 || wire == nil {
+		h.Logger.Warn("skipping unservable record", "zone", r.Zone, "name", r.Name, "type", r.Type, "err", r.WireErr)
+		return
+	}
+	*section = append(*section, RR{Name: owner, Type: typ, Class: ClassIN, TTL: uint32(r.TTL), RData: wire})
+}
+
+func wireOf(r *store.Record) []byte {
+	if r.Wire != nil {
+		return r.Wire
+	}
+	if r.WireErr != nil {
+		return nil
+	}
+	wire, err := BuildRData(TypeCode(r.Type), r.RData)
+	if err != nil {
+		return nil
+	}
+	return wire
+}
+
+func filterType(records []*store.Record, qtype uint16) []*store.Record {
+	var out []*store.Record
+	for _, r := range records {
+		if TypeCode(r.Type) == qtype {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func inZone(name, zone string) bool {
+	return name == zone || strings.HasSuffix(name, "."+zone)
+}
+
+func (h *Handler) addAdditional(ctx context.Context, resp *Message, zone *store.Zone, qtype uint16, records []*store.Record) {
+	switch qtype {
+	case TypeMX, TypeNS, TypeSRV:
+		h.addGlue(ctx, resp, zone, records)
+	}
+}
+
+func (h *Handler) addGlue(ctx context.Context, resp *Message, zone *store.Zone, records []*store.Record) {
+	seen := make(map[string]struct{}, len(records))
+	for _, r := range records {
+		if len(seen) >= maxAdditional {
+			return
+		}
+		target := strings.ToLower(RDataNames(TypeCode(r.Type), wireOf(r)))
+		if target == "" || !inZone(target, zone.Name) {
+			continue
+		}
+		if _, dup := seen[target]; dup {
+			continue
+		}
+		seen[target] = struct{}{}
+		set, err := h.Resolver.LookupName(ctx, zone.Name, target)
+		if err != nil {
+			continue
+		}
+		for _, a := range set.Records {
+			if a.Type == "A" || a.Type == "AAAA" {
+				h.appendRR(&resp.Additional, target, a)
+			}
 		}
 	}
 }
