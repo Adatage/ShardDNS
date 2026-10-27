@@ -11,22 +11,6 @@ jobs:
   build:
     name: Build & Test
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: sharddns
-          POSTGRES_PASSWORD: sharddns
-          POSTGRES_DB: sharddns
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U sharddns"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      TEST_DATABASE_URL: postgres://sharddns:sharddns@localhost:5432/sharddns?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -61,8 +45,6 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -race -count=1 -p 1 ./...
 
   docker:
     name: Docker

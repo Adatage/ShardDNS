@@ -2,19 +2,17 @@ package store
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/Adatage/ShardDNS/db"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-//go:embed schema.sql
-var schema string
 
 const migrationLockID int64 = 0x5348415244444e53
 
@@ -119,7 +117,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	defer conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", migrationLockID)
 
-	if _, err := conn.Exec(ctx, schema, pgx.QueryExecModeSimpleProtocol); err != nil {
+	if _, err := conn.Exec(ctx, db.Schema, pgx.QueryExecModeSimpleProtocol); err != nil {
 		return fmt.Errorf("store: apply schema: %w", err)
 	}
 	return nil

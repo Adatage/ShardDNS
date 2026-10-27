@@ -71,7 +71,7 @@ dig @127.0.0.1 www.example.com A
 ### Build from source
 
 ```bash
-make build        # bin/sharddnsd, bin/sharddns, bin/dnsbench
+make build        # bin/sharddnsd, bin/sharddns
 export DATABASE_URL=postgres://sharddns:sharddns@127.0.0.1:5432/sharddns?sslmode=disable
 sudo setcap cap_net_bind_service=+ep bin/sharddnsd    # or set DNS_ADDR=:5353
 ./bin/sharddnsd
@@ -193,7 +193,7 @@ resp, err := client.GetZone(ctx, connect.NewRequest(&sharddnsv1.GetZoneRequest{N
 
 ## Database
 
-The schema is embedded in the binary ([`internal/store/schema.sql`](internal/store/schema.sql)). On startup any missing tables and indexes are created, under an advisory lock so several instances can start at once.
+The schema is embedded in the binary ([`db/schema.sql`](db/schema.sql)). On startup any missing tables and indexes are created, under an advisory lock so several instances can start at once.
 
 | Table     | Key                                   | Notes                                                    |
 |-----------|---------------------------------------|----------------------------------------------------------|
@@ -202,38 +202,14 @@ The schema is embedded in the binary ([`internal/store/schema.sql`](internal/sto
 
 ---
 
-## Performance
-
-`bench/` (built as `bin/dnsbench`) seeds a zone and drives UDP or TCP load.
-
-```bash
-bin/dnsbench -seed -api http://127.0.0.1:9053 -names 10000
-bin/dnsbench -server 127.0.0.1:53 -duration 15s -c 64
-```
-
-Measured on one 12-thread machine with PostgreSQL, the load generator and `sharddnsd` all sharing the same CPUs (10,000 names, 5% NXDOMAIN, 64 concurrent clients, UDP):
-
-| Mode                   | Throughput    | p50 latency | p99 latency |
-|------------------------|---------------|-------------|-------------|
-| PostgreSQL, no cache   | ~50,000 qps   | ~1.15 ms    | ~3.3 ms     |
-| In-memory cache        | ~100,000-118,000 qps | ~0.15-0.19 ms | ~4.5 ms |
-
-Absolute numbers depend heavily on hardware and on how far the database is from the server; the ratio is what to look at.
-
----
-
 ## Development
 
 ```bash
 make proto             # regenerate api/ with buf (remote plugins, pinned versions)
-make build             # build all binaries into bin/
-make test              # unit tests (integration tests skip without a database)
-make test-integration TEST_DATABASE_URL=postgres://...   # includes the PostgreSQL tests
+make build             # build both binaries into bin/
 make lint              # go vet
 make docker-up         # PostgreSQL + NATS + sharddnsd
 ```
-
-> The integration tests truncate the `zones` and `records` tables of the database they run against. Use a throwaway database.
 
 > The generated code in `api/` is committed. After editing the `.proto` file run `make proto` and commit the result; CI fails if it drifts.
 
