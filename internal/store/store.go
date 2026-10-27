@@ -117,6 +117,14 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	defer conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", migrationLockID)
 
+	var present bool
+	if err := conn.QueryRow(ctx, "SELECT to_regclass('zones') IS NOT NULL AND to_regclass('records') IS NOT NULL").Scan(&present); err != nil {
+		return fmt.Errorf("store: check schema: %w", err)
+	}
+	if present {
+		return nil
+	}
+
 	if _, err := conn.Exec(ctx, db.Schema, pgx.QueryExecModeSimpleProtocol); err != nil {
 		return fmt.Errorf("store: apply schema: %w", err)
 	}
