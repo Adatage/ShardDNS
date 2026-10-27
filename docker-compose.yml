@@ -44,7 +44,7 @@ services:
       WORKERS: ${WORKERS:-0}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CACHE_ENABLED: ${CACHE_ENABLED:-true}
-      CACHE_TTL: ${CACHE_TTL:-60s}
+      CACHE_TTL: ${CACHE_TTL:-0}
       CACHE_MAX_ENTRIES: ${CACHE_MAX_ENTRIES:-100000}
       NATS_URL: nats://nats:4222
 

@@ -85,10 +85,8 @@ func run() error {
 	}
 	defer st.Close()
 
-	if cfg.AutoMigrate {
-		if err := st.Migrate(ctx); err != nil {
-			return err
-		}
+	if err := st.Migrate(ctx); err != nil {
+		return err
 	}
 
 	var (
@@ -126,7 +124,7 @@ func run() error {
 		}
 		logger.Info("NATS change events enabled", "subject", cfg.NATSSubject)
 	} else if cached != nil {
-		logger.Warn("cache enabled without NATS_URL; other instances will serve stale data until CACHE_TTL expires")
+		logger.Warn("cache enabled without NATS_URL; other instances will serve stale data until their entries are evicted or CACHE_TTL expires")
 	}
 
 	notify := func(ctx context.Context, kind sharddnsv1.ChangeEvent_Kind, zone, name string) {

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"hash/maphash"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,7 +79,11 @@ func (c *Cache[V]) Set(key, group string, value V, epoch uint64) {
 	if _, exists := s.m[key]; !exists && len(s.m) >= c.perShard {
 		c.evict(s, now)
 	}
-	s.m[key] = entry[V]{value: value, group: group, expires: now + int64(c.ttl)}
+	expires := int64(math.MaxInt64)
+	if c.ttl > 0 {
+		expires = now + int64(c.ttl)
+	}
+	s.m[key] = entry[V]{value: value, group: group, expires: expires}
 }
 
 func (c *Cache[V]) evict(s *shard[V], now int64) {

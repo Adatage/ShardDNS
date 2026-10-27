@@ -15,7 +15,6 @@ type Config struct {
 	APIToken        string
 	DatabaseURL     string
 	DBMaxConns      int
-	AutoMigrate     bool
 	Workers         int
 	LogLevel        string
 	CacheEnabled    bool
@@ -32,7 +31,6 @@ func Load() (*Config, error) {
 		APIToken:        os.Getenv("API_TOKEN"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		DBMaxConns:      getenvInt("DB_MAX_CONNS", 0),
-		AutoMigrate:     getenvBool("AUTO_MIGRATE", true),
 		Workers:         getenvInt("WORKERS", 0),
 		LogLevel:        getenv("LOG_LEVEL", "info"),
 		CacheEnabled:    getenvBool("CACHE_ENABLED", false),
@@ -40,9 +38,9 @@ func Load() (*Config, error) {
 		NATSURL:         os.Getenv("NATS_URL"),
 		NATSSubject:     getenv("NATS_SUBJECT", "sharddns.changes"),
 	}
-	ttl, err := time.ParseDuration(getenv("CACHE_TTL", "60s"))
-	if err != nil || ttl <= 0 {
-		return nil, fmt.Errorf("config: CACHE_TTL must be a positive duration")
+	ttl, err := time.ParseDuration(getenv("CACHE_TTL", "0"))
+	if err != nil || ttl < 0 {
+		return nil, fmt.Errorf("config: CACHE_TTL must be a non-negative duration")
 	}
 	cfg.CacheTTL = ttl
 

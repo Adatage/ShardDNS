@@ -28,7 +28,7 @@ ShardDNS is an authoritative DNS server written in Go. PostgreSQL is the only so
 - **Correct negative answers:** NXDOMAIN vs NODATA (including empty non-terminals), SOA in the authority section with RFC 2308 TTLs
 - **Wildcards** (`*.example.com`), **CNAME chains** (also across zones served by the same instance), **DNAME** synthesis, **delegations** with glue, and additional-section processing for MX, NS and SRV
 - **Validated writes:** record data is parsed on create, CNAME exclusivity is enforced, RRset TTLs stay consistent, and the zone serial advances on every change
-- **Operations:** auto-migrating schema, `/healthz` and `/readyz`, optional bearer-token auth, graceful shutdown, JSON logs, gRPC reflection
+- **Operations:** schema created automatically, `/healthz` and `/readyz`, optional bearer-token auth, graceful shutdown, JSON logs, gRPC reflection
 
 ---
 
@@ -48,7 +48,7 @@ ShardDNS is an authoritative DNS server written in Go. PostgreSQL is the only so
                       └────────────┘   └──────┘
 ```
 
-On a write, the instance that handled it invalidates its own cache and publishes a `ChangeEvent`. Every other instance subscribed to the subject invalidates the affected names. Without NATS, `CACHE_TTL` bounds how stale another instance can be.
+On a write, the instance that handled it invalidates its own cache and publishes a `ChangeEvent`. Every other instance subscribed to the subject invalidates the affected names. Cache entries do not expire on their own; they are dropped when invalidated or evicted at `CACHE_MAX_ENTRIES`. Without NATS, other instances only notice changes if you set `CACHE_TTL`.
 
 ---
 
@@ -101,14 +101,13 @@ All configuration is through environment variables (see [`.env.example`](.env.ex
 |---------------------|--------------------|--------------------------------------------------------------------------|
 | `DATABASE_URL`      | *(required)*       | PostgreSQL connection URL                                                |
 | `DB_MAX_CONNS`      | `max(8, 2×CPUs)`   | Connection pool size                                                     |
-| `AUTO_MIGRATE`      | `true`             | Apply the embedded schema on startup                                     |
 | `DNS_ADDR`          | `:53`              | DNS listen address (UDP and TCP)                                         |
 | `API_ADDR`          | `:9053`            | ConnectRPC API listen address                                            |
 | `API_TOKEN`         | *(empty)*          | If set, API calls must send `Authorization: Bearer <token>`              |
 | `WORKERS`           | `0`                | DNS worker goroutines (`0` = 4 × CPUs)                                   |
 | `LOG_LEVEL`         | `info`             | `debug`, `info`, `warn`, `error`                                         |
 | `CACHE_ENABLED`     | `false`            | Enable the in-memory cache                                               |
-| `CACHE_TTL`         | `60s`              | Maximum age of a cache entry                                             |
+| `CACHE_TTL`         | `0`                | Maximum age of a cache entry (`0` = no expiry, rely on invalidation)     |
 | `CACHE_MAX_ENTRIES` | `100000`           | Upper bound on cached names                                              |
 | `NATS_URL`          | *(empty)*          | Enable change-event publishing and cache invalidation over NATS          |
 | `NATS_SUBJECT`      | `sharddns.changes` | Subject used for change events                                           |
@@ -194,7 +193,7 @@ resp, err := client.GetZone(ctx, connect.NewRequest(&sharddnsv1.GetZoneRequest{N
 
 ## Database
 
-The schema is embedded in the binary ([`internal/store/schema.sql`](internal/store/schema.sql)) and applied under an advisory lock on startup, so several instances can start at once. Set `AUTO_MIGRATE=false` to manage it yourself.
+The schema is embedded in the binary ([`internal/store/schema.sql`](internal/store/schema.sql)). On startup any missing tables and indexes are created, under an advisory lock so several instances can start at once.
 
 | Table     | Key                                   | Notes                                                    |
 |-----------|---------------------------------------|----------------------------------------------------------|
@@ -237,18 +236,6 @@ make docker-up         # PostgreSQL + NATS + sharddnsd
 > The integration tests truncate the `zones` and `records` tables of the database they run against. Use a throwaway database.
 
 > The generated code in `api/` is committed. After editing the `.proto` file run `make proto` and commit the result; CI fails if it drifts.
-
----
-
-## Upgrading from 1.x
-
-2.0 is a breaking release:
-
-- ScyllaDB is replaced by PostgreSQL (`SCYLLA_*` variables are gone, use `DATABASE_URL`). Records are not migrated automatically.
-- gRPC is replaced by ConnectRPC. The service is now `sharddns.v1.DNSManager` and the address variable is `API_ADDR` (was `GRPC_ADDR`). Existing gRPC clients keep working at the protocol level but must be regenerated for the new package.
-- Binaries are renamed: `server` is now `sharddnsd` and `cli` is now `sharddns`.
-- SOA records are no longer stored as rows. They are generated from the zone, and creating a record of type `SOA` is rejected.
-- Deleting a zone now deletes its records.
 
 ---
 
