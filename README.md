@@ -211,6 +211,18 @@ make lint              # go vet
 make docker-up         # PostgreSQL + NATS + sharddnsd
 ```
 
+### Releasing
+
+Push a version tag and the workflows do the rest:
+
+```bash
+git tag v2.1.0
+git push origin v2.1.0
+```
+
+- `CI` builds and pushes the image to `ghcr.io/adatage/sharddns` tagged `2.1.0`, `2.1` and `latest`.
+- `Release` builds `sharddnsd` and `sharddns` for Linux, macOS and Windows (amd64 and arm64), packs them with `SHA256SUMS`, and creates the GitHub release with generated notes. Tags containing a hyphen (`v2.1.0-rc1`) are marked as pre-releases.
+
 > The generated code in `api/` is committed. After editing the `.proto` file run `make proto` and commit the result; CI fails if it drifts.
 
 ---
